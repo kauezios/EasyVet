@@ -18,10 +18,17 @@ Este repositorio foi iniciado com dois objetivos:
 - `docs/product/VISAO-PRODUTO.md`: visao do produto
 - `docs/product/MVP-V1.md`: escopo do MVP v1
 - `docs/product/JORNADAS-CRITICAS.md`: fluxos prioritarios
+- `docs/product/GLOSSARIO-CLINICO-E-CAMPOS.md`: padrao clinico e campos obrigatorios
 - `docs/arquitetura/ARQUITETURA-INICIAL.md`: arquitetura inicial
 - `docs/arquitetura/ADR-0001-api-first.md`: decisao arquitetural inicial
+- `docs/arquitetura/PADRAO-API-V1.md`: convencoes de contratos e erros da API
 - `docs/dados/MODELO-DADOS-INICIAL.md`: modelo de dados base
 - `docs/compliance/LGPD-BASELINE.md`: baseline de seguranca e LGPD
+- `docs/compliance/MATRIZ-RBAC.md`: matriz de permissao por perfil
+- `docs/frontend/WIREFRAMES-LOW-FI.md`: wireframes operacionais iniciais
+- `docs/qa/ESTRATEGIA-TESTES-MVP.md`: estrategia de testes do MVP
+- `docs/devops/ESTRATEGIA-CICD-AMBIENTES.md`: estrategia de ambientes e CI/CD
+- `docs/sprint-1/BACKLOG-SPRINT-1.md`: backlog planejado da sprint seguinte
 
 ## Como usar agora
 

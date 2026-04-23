@@ -1,7 +1,7 @@
 # Sprint 0 - Plano Oficial
 
 Periodo: 2026-04-23 a 2026-05-06
-Status: Em andamento
+Status: Concluido antecipadamente em 2026-04-23
 Responsavel final: Agente Orquestrador
 
 ## Objetivo da Sprint 0
@@ -33,6 +33,16 @@ Criar a base de produto, processo e arquitetura do EasyVet para iniciar desenvol
 - `docs/dados/MODELO-DADOS-INICIAL.md`
 - `docs/compliance/LGPD-BASELINE.md`
 - `docs/sprint-0/BACKLOG-SPRINT-0.md`
+
+## Entregaveis adicionais concluidos
+
+- `docs/product/GLOSSARIO-CLINICO-E-CAMPOS.md`
+- `docs/compliance/MATRIZ-RBAC.md`
+- `docs/arquitetura/PADRAO-API-V1.md`
+- `docs/frontend/WIREFRAMES-LOW-FI.md`
+- `docs/qa/ESTRATEGIA-TESTES-MVP.md`
+- `docs/devops/ESTRATEGIA-CICD-AMBIENTES.md`
+- `docs/sprint-1/BACKLOG-SPRINT-1.md`
 
 ## Ritos da sprint
 

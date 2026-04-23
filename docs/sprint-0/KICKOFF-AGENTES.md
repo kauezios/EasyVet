@@ -36,3 +36,11 @@ Status: Sprint iniciada
 2. Iniciar EV-S0-009 com matriz de permissoes.
 3. Iniciar EV-S0-010 com padrao de API e erros.
 4. Preparar backlog detalhado da Sprint 1.
+
+## Atualizacao de status (2026-04-23)
+
+- EV-S0-003 concluido com publicacao do glossario e campos minimos de prontuario.
+- EV-S0-009 concluido com matriz RBAC por perfil.
+- EV-S0-010 concluido com padrao de API v1 e contrato de erros.
+- EV-S0-011, EV-S0-012 e EV-S0-013 concluidos com artefatos de Frontend, QA e DevOps.
+- EV-S0-015 concluido com backlog planejado da Sprint 1.
