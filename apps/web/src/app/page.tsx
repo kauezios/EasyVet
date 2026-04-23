@@ -88,6 +88,36 @@ type Appointment = {
   };
 };
 
+type MedicalRecordStatus = 'DRAFT' | 'FINALIZED';
+
+type MedicalRecord = {
+  id: string;
+  appointmentId: string;
+  status: MedicalRecordStatus;
+  chiefComplaint: string | null;
+  symptomsOnset: string | null;
+  clinicalHistory: string | null;
+  physicalExam: string | null;
+  presumptiveDiagnosis: string | null;
+  conduct: string | null;
+  guidance: string | null;
+  recommendedReturnAt: string | null;
+  finalizedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type MedicalRecordFormState = {
+  chiefComplaint: string;
+  symptomsOnset: string;
+  clinicalHistory: string;
+  physicalExam: string;
+  presumptiveDiagnosis: string;
+  conduct: string;
+  guidance: string;
+  recommendedReturnAt: string;
+};
+
 type AccessProfile = {
   id: string;
   name: string;
@@ -117,6 +147,7 @@ type DemoDataset = {
   patients: Patient[];
   appointments: Appointment[];
   profiles: AccessProfile[];
+  medicalRecordsByAppointment: Record<string, MedicalRecord>;
 };
 
 type SectionItem = {
@@ -207,6 +238,22 @@ const STATUS_VISUAL: Record<
     label: 'Nao compareceu',
     textClass: 'text-fuchsia-700',
     dotClass: 'bg-fuchsia-500',
+  },
+};
+
+const MEDICAL_RECORD_STATUS_VISUAL: Record<
+  MedicalRecordStatus,
+  { label: string; textClass: string; dotClass: string }
+> = {
+  DRAFT: {
+    label: 'Rascunho',
+    textClass: 'text-amber-700',
+    dotClass: 'bg-amber-500',
+  },
+  FINALIZED: {
+    label: 'Finalizado',
+    textClass: 'text-emerald-700',
+    dotClass: 'bg-emerald-500',
   },
 };
 
@@ -414,6 +461,102 @@ function sortAppointments(data: Appointment[]): Appointment[] {
   return [...data].sort((first, second) => {
     return new Date(first.startsAt).getTime() - new Date(second.startsAt).getTime();
   });
+}
+
+function createEmptyMedicalRecordFormState(): MedicalRecordFormState {
+  return {
+    chiefComplaint: '',
+    symptomsOnset: '',
+    clinicalHistory: '',
+    physicalExam: '',
+    presumptiveDiagnosis: '',
+    conduct: '',
+    guidance: '',
+    recommendedReturnAt: '',
+  };
+}
+
+function formatDateToInput(dateIso: string | null): string {
+  if (!dateIso) {
+    return '';
+  }
+
+  const date = new Date(dateIso);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const offset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - offset * 60000);
+  return localDate.toISOString().slice(0, 10);
+}
+
+function buildMedicalRecordFormFromRecord(
+  record: MedicalRecord | null,
+): MedicalRecordFormState {
+  if (!record) {
+    return createEmptyMedicalRecordFormState();
+  }
+
+  return {
+    chiefComplaint: record.chiefComplaint ?? '',
+    symptomsOnset: record.symptomsOnset ?? '',
+    clinicalHistory: record.clinicalHistory ?? '',
+    physicalExam: record.physicalExam ?? '',
+    presumptiveDiagnosis: record.presumptiveDiagnosis ?? '',
+    conduct: record.conduct ?? '',
+    guidance: record.guidance ?? '',
+    recommendedReturnAt: formatDateToInput(record.recommendedReturnAt),
+  };
+}
+
+function buildRecommendedReturnAtIso(value: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  return date.toISOString();
+}
+
+function buildMedicalRecordPayload(form: MedicalRecordFormState): {
+  chiefComplaint?: string;
+  symptomsOnset?: string;
+  clinicalHistory?: string;
+  physicalExam?: string;
+  presumptiveDiagnosis?: string;
+  conduct?: string;
+  guidance?: string;
+  recommendedReturnAt?: string;
+} {
+  return {
+    chiefComplaint: normalizeOptionalText(form.chiefComplaint),
+    symptomsOnset: normalizeOptionalText(form.symptomsOnset),
+    clinicalHistory: normalizeOptionalText(form.clinicalHistory),
+    physicalExam: normalizeOptionalText(form.physicalExam),
+    presumptiveDiagnosis: normalizeOptionalText(form.presumptiveDiagnosis),
+    conduct: normalizeOptionalText(form.conduct),
+    guidance: normalizeOptionalText(form.guidance),
+    recommendedReturnAt: buildRecommendedReturnAtIso(form.recommendedReturnAt),
+  };
+}
+
+function canFinalizeMedicalRecord(form: MedicalRecordFormState): boolean {
+  const requiredValues = [
+    form.chiefComplaint,
+    form.symptomsOnset,
+    form.clinicalHistory,
+    form.physicalExam,
+    form.presumptiveDiagnosis,
+    form.conduct,
+    form.guidance,
+  ];
+
+  return requiredValues.every((value) => value.trim().length > 0);
 }
 
 function normalizeErrorMessage(error: unknown, fallback: string): string {
@@ -633,11 +776,31 @@ function createDemoDataset(date: string, fallbackVetName: string): DemoDataset {
     },
   ];
 
+  const medicalRecordsByAppointment: Record<string, MedicalRecord> = {
+    'demo-appt-1': {
+      id: 'demo-record-1',
+      appointmentId: 'demo-appt-1',
+      status: 'DRAFT',
+      chiefComplaint: 'Prurido em regiao cervical',
+      symptomsOnset: 'Ha 3 dias',
+      clinicalHistory: 'Paciente ativo, sem alteracao de apetite.',
+      physicalExam: null,
+      presumptiveDiagnosis: null,
+      conduct: null,
+      guidance: null,
+      recommendedReturnAt: null,
+      finalizedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+  };
+
   return {
     tutors,
     patients,
     appointments,
     profiles,
+    medicalRecordsByAppointment,
   };
 }
 
@@ -673,6 +836,14 @@ export default function Home() {
     Record<string, Appointment[]>
   >({});
   const [profiles, setProfiles] = useState<AccessProfile[]>([]);
+  const [demoMedicalRecordsByAppointment, setDemoMedicalRecordsByAppointment] =
+    useState<Record<string, MedicalRecord>>({});
+  const [selectedConsultationId, setSelectedConsultationId] = useState('');
+  const [selectedMedicalRecord, setSelectedMedicalRecord] =
+    useState<MedicalRecord | null>(null);
+  const [medicalRecordForm, setMedicalRecordForm] = useState<MedicalRecordFormState>(
+    createEmptyMedicalRecordFormState(),
+  );
 
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const [isProfileSaving, setIsProfileSaving] = useState(false);
@@ -680,6 +851,9 @@ export default function Home() {
   const [isPatientSaving, setIsPatientSaving] = useState(false);
   const [isAvailabilityLoading, setIsAvailabilityLoading] = useState(false);
   const [isClinicSettingsSaving, setIsClinicSettingsSaving] = useState(false);
+  const [isMedicalRecordLoading, setIsMedicalRecordLoading] = useState(false);
+  const [isMedicalRecordSaving, setIsMedicalRecordSaving] = useState(false);
+  const [isMedicalRecordFinalizing, setIsMedicalRecordFinalizing] = useState(false);
 
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -804,6 +978,23 @@ export default function Home() {
     () => sortAppointments(appointments),
     [appointments],
   );
+
+  const selectedConsultation = useMemo(() => {
+    return (
+      sortedAppointments.find((item) => item.id === selectedConsultationId) ?? null
+    );
+  }, [selectedConsultationId, sortedAppointments]);
+
+  const selectedConsultationIsFinalizedRecord =
+    selectedMedicalRecord?.status === 'FINALIZED';
+
+  const medicalRecordCanFinalize = useMemo(() => {
+    if (selectedConsultationIsFinalizedRecord) {
+      return false;
+    }
+
+    return canFinalizeMedicalRecord(medicalRecordForm);
+  }, [medicalRecordForm, selectedConsultationIsFinalizedRecord]);
 
   const appointmentMetrics = useMemo(() => {
     const total = appointments.length;
@@ -1023,6 +1214,93 @@ export default function Home() {
     [appointmentsByDate, loadAppointmentsForDate],
   );
 
+  const patchAppointmentStatusLocally = useCallback(
+    (appointmentId: string, status: AppointmentStatus) => {
+      setAppointments((current) =>
+        sortAppointments(
+          current.map((item) => {
+            if (item.id !== appointmentId) {
+              return item;
+            }
+
+            return {
+              ...item,
+              status,
+            };
+          }),
+        ),
+      );
+
+      setAppointmentsByDate((current) => {
+        const next = { ...current };
+        Object.entries(next).forEach(([date, dayAppointments]) => {
+          if (!dayAppointments.some((item) => item.id === appointmentId)) {
+            return;
+          }
+
+          next[date] = sortAppointments(
+            dayAppointments.map((item) => {
+              if (item.id !== appointmentId) {
+                return item;
+              }
+
+              return {
+                ...item,
+                status,
+              };
+            }),
+          );
+        });
+
+        return next;
+      });
+    },
+    [],
+  );
+
+  const loadMedicalRecordForConsultation = useCallback(
+    async (appointmentId: string) => {
+      if (!appointmentId) {
+        setSelectedMedicalRecord(null);
+        setMedicalRecordForm(createEmptyMedicalRecordFormState());
+        return;
+      }
+
+      setIsMedicalRecordLoading(true);
+
+      try {
+        if (isDemoMode) {
+          const demoRecord = demoMedicalRecordsByAppointment[appointmentId] ?? null;
+          setSelectedMedicalRecord(demoRecord);
+          setMedicalRecordForm(buildMedicalRecordFormFromRecord(demoRecord));
+          return;
+        }
+
+        const record = await request<MedicalRecord>(
+          `/appointments/${appointmentId}/medical-record`,
+        );
+        setSelectedMedicalRecord(record);
+        setMedicalRecordForm(buildMedicalRecordFormFromRecord(record));
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.includes('MEDICAL_RECORD_NOT_FOUND')
+        ) {
+          setSelectedMedicalRecord(null);
+          setMedicalRecordForm(createEmptyMedicalRecordFormState());
+          return;
+        }
+
+        setErrorMessage(
+          normalizeErrorMessage(error, 'Falha ao carregar prontuario da consulta.'),
+        );
+      } finally {
+        setIsMedicalRecordLoading(false);
+      }
+    },
+    [demoMedicalRecordsByAppointment, isDemoMode, request],
+  );
+
   const bootstrapWorkspace = useCallback(async () => {
     if (!authUser) {
       return;
@@ -1052,6 +1330,9 @@ export default function Home() {
       setTutors(tutorData);
       setPatients(patientData);
       setAppointments(sortedDayAppointments);
+      setDemoMedicalRecordsByAppointment({});
+      setSelectedMedicalRecord(null);
+      setMedicalRecordForm(createEmptyMedicalRecordFormState());
       setClinicSettings(scheduleData);
       setSavedClinicSettings(scheduleData);
       setAppointmentsByDate((current) => ({
@@ -1079,6 +1360,9 @@ export default function Home() {
       setTutors(demoDataset.tutors);
       setPatients(demoDataset.patients);
       setAppointments(demoDataset.appointments);
+      setDemoMedicalRecordsByAppointment(demoDataset.medicalRecordsByAppointment);
+      setSelectedMedicalRecord(null);
+      setMedicalRecordForm(createEmptyMedicalRecordFormState());
       setClinicSettings(DEFAULT_CLINIC_SETTINGS);
       setSavedClinicSettings(DEFAULT_CLINIC_SETTINGS);
       setAppointmentsByDate((current) => ({
@@ -1181,6 +1465,35 @@ export default function Home() {
     }
   }, [activeSection, nextFreeSlot, schedulingDate, schedulingDaySummaries]);
 
+  useEffect(() => {
+    if (activeSection !== 'consultations') {
+      return;
+    }
+
+    if (sortedAppointments.length === 0) {
+      setSelectedConsultationId('');
+      setSelectedMedicalRecord(null);
+      setMedicalRecordForm(createEmptyMedicalRecordFormState());
+      return;
+    }
+
+    const selectedExists = sortedAppointments.some(
+      (item) => item.id === selectedConsultationId,
+    );
+
+    if (!selectedExists) {
+      setSelectedConsultationId(sortedAppointments[0].id);
+    }
+  }, [activeSection, selectedConsultationId, sortedAppointments]);
+
+  useEffect(() => {
+    if (activeSection !== 'consultations' || !selectedConsultationId) {
+      return;
+    }
+
+    void loadMedicalRecordForConsultation(selectedConsultationId);
+  }, [activeSection, loadMedicalRecordForConsultation, selectedConsultationId]);
+
   async function onLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -1246,6 +1559,10 @@ export default function Home() {
     setAppointments([]);
     setAppointmentsByDate({});
     setProfiles([]);
+    setDemoMedicalRecordsByAppointment({});
+    setSelectedConsultationId('');
+    setSelectedMedicalRecord(null);
+    setMedicalRecordForm(createEmptyMedicalRecordFormState());
     setIsDemoMode(false);
     setClinicSettings(DEFAULT_CLINIC_SETTINGS);
     setSavedClinicSettings(DEFAULT_CLINIC_SETTINGS);
@@ -1399,26 +1716,7 @@ export default function Home() {
 
     try {
       if (isDemoMode) {
-        const updateStatus = (data: Appointment[]) =>
-          data.map((item) => {
-            if (item.id !== appointmentId) {
-              return item;
-            }
-
-            return {
-              ...item,
-              status,
-            };
-          });
-
-        setAppointments((current) => sortAppointments(updateStatus(current)));
-        setAppointmentsByDate((current) => {
-          const dayAppointments = current[selectedDate] ?? [];
-          return {
-            ...current,
-            [selectedDate]: sortAppointments(updateStatus(dayAppointments)),
-          };
-        });
+        patchAppointmentStatusLocally(appointmentId, status);
       } else {
         const updated = await request<Appointment>(
           `/appointments/${appointmentId}/status`,
@@ -1478,6 +1776,231 @@ export default function Home() {
     }
 
     void onChangeAppointmentStatus(appointmentId, 'CANCELED');
+  }
+
+  function onSelectConsultationForMedicalRecord(appointmentId: string) {
+    setSelectedConsultationId(appointmentId);
+
+    const panel = document.getElementById('medical-record-workspace');
+    if (panel) {
+      panel.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }
+  }
+
+  function onMedicalRecordFieldChange(
+    field: keyof MedicalRecordFormState,
+    value: string,
+  ) {
+    setMedicalRecordForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  async function onStartMedicalRecord() {
+    if (!selectedConsultation) {
+      return;
+    }
+
+    setStatusMessage('');
+    setErrorMessage('');
+    setIsMedicalRecordLoading(true);
+
+    try {
+      if (isDemoMode) {
+        const now = new Date().toISOString();
+        const createdRecord: MedicalRecord = {
+          id: selectedMedicalRecord?.id ?? `demo-record-${Date.now()}`,
+          appointmentId: selectedConsultation.id,
+          status: 'DRAFT',
+          chiefComplaint: null,
+          symptomsOnset: null,
+          clinicalHistory: null,
+          physicalExam: null,
+          presumptiveDiagnosis: null,
+          conduct: null,
+          guidance: null,
+          recommendedReturnAt: null,
+          finalizedAt: null,
+          createdAt: selectedMedicalRecord?.createdAt ?? now,
+          updatedAt: now,
+        };
+
+        setDemoMedicalRecordsByAppointment((current) => ({
+          ...current,
+          [selectedConsultation.id]: createdRecord,
+        }));
+        setSelectedMedicalRecord(createdRecord);
+        setMedicalRecordForm(buildMedicalRecordFormFromRecord(createdRecord));
+        setStatusMessage('Prontuario iniciado no modo demonstracao.');
+        return;
+      }
+
+      const record = await request<MedicalRecord>(
+        `/appointments/${selectedConsultation.id}/medical-record/start`,
+        {
+          method: 'POST',
+        },
+      );
+
+      setSelectedMedicalRecord(record);
+      setMedicalRecordForm(buildMedicalRecordFormFromRecord(record));
+      setStatusMessage('Prontuario iniciado com sucesso.');
+    } catch (error) {
+      setErrorMessage(
+        normalizeErrorMessage(error, 'Falha ao iniciar prontuario da consulta.'),
+      );
+    } finally {
+      setIsMedicalRecordLoading(false);
+    }
+  }
+
+  async function onSaveMedicalRecordDraft() {
+    if (!selectedConsultation) {
+      return;
+    }
+
+    if (selectedConsultationIsFinalizedRecord) {
+      setErrorMessage(
+        'Este prontuario ja foi finalizado e nao aceita novas alteracoes em rascunho.',
+      );
+      return;
+    }
+
+    setStatusMessage('');
+    setErrorMessage('');
+    setIsMedicalRecordSaving(true);
+
+    try {
+      const payload = buildMedicalRecordPayload(medicalRecordForm);
+
+      if (isDemoMode) {
+        const now = new Date().toISOString();
+        const draftRecord: MedicalRecord = {
+          id: selectedMedicalRecord?.id ?? `demo-record-${Date.now()}`,
+          appointmentId: selectedConsultation.id,
+          status: 'DRAFT',
+          chiefComplaint: payload.chiefComplaint ?? null,
+          symptomsOnset: payload.symptomsOnset ?? null,
+          clinicalHistory: payload.clinicalHistory ?? null,
+          physicalExam: payload.physicalExam ?? null,
+          presumptiveDiagnosis: payload.presumptiveDiagnosis ?? null,
+          conduct: payload.conduct ?? null,
+          guidance: payload.guidance ?? null,
+          recommendedReturnAt: payload.recommendedReturnAt ?? null,
+          finalizedAt: null,
+          createdAt: selectedMedicalRecord?.createdAt ?? now,
+          updatedAt: now,
+        };
+
+        setDemoMedicalRecordsByAppointment((current) => ({
+          ...current,
+          [selectedConsultation.id]: draftRecord,
+        }));
+        setSelectedMedicalRecord(draftRecord);
+        setMedicalRecordForm(buildMedicalRecordFormFromRecord(draftRecord));
+        setStatusMessage('Rascunho do prontuario salvo no modo demonstracao.');
+        return;
+      }
+
+      const record = await request<MedicalRecord>(
+        `/appointments/${selectedConsultation.id}/medical-record/draft`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        },
+      );
+
+      setSelectedMedicalRecord(record);
+      setMedicalRecordForm(buildMedicalRecordFormFromRecord(record));
+      setStatusMessage('Rascunho do prontuario salvo com sucesso.');
+    } catch (error) {
+      setErrorMessage(
+        normalizeErrorMessage(error, 'Falha ao salvar rascunho do prontuario.'),
+      );
+    } finally {
+      setIsMedicalRecordSaving(false);
+    }
+  }
+
+  async function onFinalizeMedicalRecord() {
+    if (!selectedConsultation) {
+      return;
+    }
+
+    if (selectedConsultationIsFinalizedRecord) {
+      setStatusMessage('Prontuario ja finalizado.');
+      return;
+    }
+
+    if (!medicalRecordCanFinalize) {
+      setErrorMessage(
+        'Preencha todos os campos obrigatorios para finalizar o prontuario.',
+      );
+      return;
+    }
+
+    setStatusMessage('');
+    setErrorMessage('');
+    setIsMedicalRecordFinalizing(true);
+
+    try {
+      const payload = buildMedicalRecordPayload(medicalRecordForm);
+
+      if (isDemoMode) {
+        const now = new Date().toISOString();
+        const finalizedRecord: MedicalRecord = {
+          id: selectedMedicalRecord?.id ?? `demo-record-${Date.now()}`,
+          appointmentId: selectedConsultation.id,
+          status: 'FINALIZED',
+          chiefComplaint: payload.chiefComplaint ?? null,
+          symptomsOnset: payload.symptomsOnset ?? null,
+          clinicalHistory: payload.clinicalHistory ?? null,
+          physicalExam: payload.physicalExam ?? null,
+          presumptiveDiagnosis: payload.presumptiveDiagnosis ?? null,
+          conduct: payload.conduct ?? null,
+          guidance: payload.guidance ?? null,
+          recommendedReturnAt: payload.recommendedReturnAt ?? null,
+          finalizedAt: now,
+          createdAt: selectedMedicalRecord?.createdAt ?? now,
+          updatedAt: now,
+        };
+
+        setDemoMedicalRecordsByAppointment((current) => ({
+          ...current,
+          [selectedConsultation.id]: finalizedRecord,
+        }));
+        setSelectedMedicalRecord(finalizedRecord);
+        setMedicalRecordForm(buildMedicalRecordFormFromRecord(finalizedRecord));
+        patchAppointmentStatusLocally(selectedConsultation.id, 'COMPLETED');
+        setStatusMessage(
+          'Prontuario finalizado e consulta marcada como concluida (modo demonstracao).',
+        );
+        return;
+      }
+
+      const finalizedRecord = await request<MedicalRecord>(
+        `/appointments/${selectedConsultation.id}/medical-record/finalize`,
+        {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        },
+      );
+
+      setSelectedMedicalRecord(finalizedRecord);
+      setMedicalRecordForm(buildMedicalRecordFormFromRecord(finalizedRecord));
+      patchAppointmentStatusLocally(selectedConsultation.id, 'COMPLETED');
+      setStatusMessage('Prontuario finalizado e consulta concluida.');
+    } catch (error) {
+      setErrorMessage(
+        normalizeErrorMessage(error, 'Falha ao finalizar prontuario da consulta.'),
+      );
+    } finally {
+      setIsMedicalRecordFinalizing(false);
+    }
   }
 
   function onDiscardClinicSettingsChanges() {
@@ -2042,95 +2565,419 @@ export default function Home() {
                 </div>
 
                 <div className="divide-y divide-slate-200">
-                  {consultationsCalendarSlots.map((slot, index) => (
-                    <div
-                      key={`${selectedDate}-${slot.time}`}
-                      className="agenda-row grid grid-cols-[82px_1fr] gap-3 px-4 py-3"
-                      style={{ animationDelay: `${index * 32}ms` }}
-                    >
-                      <div className="pt-1">
-                        <p className="text-sm font-semibold text-slate-900">{slot.time}</p>
-                      </div>
+                  {consultationsCalendarSlots.map((slot, index) => {
+                    const isFocusedConsultation =
+                      slot.appointment?.id === selectedConsultationId;
 
-                      {slot.appointment ? (
-                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div>
-                              <p className="text-sm font-semibold text-slate-900">
-                                {slot.appointment.patient.name}
-                              </p>
-                              <p className="text-xs text-slate-600">
-                                {formatTime(slot.appointment.startsAt)} -{' '}
-                                {formatTime(slot.appointment.endsAt)} |{' '}
-                                {slot.appointment.reason}
-                              </p>
-                              <p className="mt-1 text-xs text-slate-500">
-                                Tutor: {slot.appointment.tutor.name} | Vet:{' '}
-                                {slot.appointment.veterinarianName}
-                              </p>
+                    return (
+                      <div
+                        key={`${selectedDate}-${slot.time}`}
+                        className={`agenda-row grid grid-cols-[82px_1fr] gap-3 px-4 py-3 ${
+                          isFocusedConsultation ? 'bg-teal-50/45' : ''
+                        }`}
+                        style={{ animationDelay: `${index * 32}ms` }}
+                      >
+                        <div className="pt-1">
+                          <p className="text-sm font-semibold text-slate-900">{slot.time}</p>
+                        </div>
+
+                        {slot.appointment ? (
+                          <div
+                            className={`rounded-md border px-3 py-3 ${
+                              isFocusedConsultation
+                                ? 'border-teal-300 bg-teal-50/70'
+                                : 'border-slate-200 bg-slate-50'
+                            }`}
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <p className="text-sm font-semibold text-slate-900">
+                                  {slot.appointment.patient.name}
+                                </p>
+                                <p className="text-xs text-slate-600">
+                                  {formatTime(slot.appointment.startsAt)} -{' '}
+                                  {formatTime(slot.appointment.endsAt)} |{' '}
+                                  {slot.appointment.reason}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  Tutor: {slot.appointment.tutor.name} | Vet:{' '}
+                                  {slot.appointment.veterinarianName}
+                                </p>
+                              </div>
+                              <StatusBadge status={slot.appointment.status} />
                             </div>
-                            <StatusBadge status={slot.appointment.status} />
-                          </div>
 
-                          <div className="mt-3 flex flex-wrap gap-1.5">
-                            <TinyActionButton
-                              title="Confirmar"
-                              onClick={() =>
-                                void onChangeAppointmentStatus(
-                                  slot.appointment!.id,
-                                  'CONFIRMED',
-                                )
-                              }
-                              disabled={
-                                slot.appointment.status === 'COMPLETED' ||
-                                slot.appointment.status === 'CANCELED'
-                              }
-                            />
-                            <TinyActionButton
-                              title="Atender"
-                              onClick={() =>
-                                void onChangeAppointmentStatus(
-                                  slot.appointment!.id,
-                                  'IN_PROGRESS',
-                                )
-                              }
-                              disabled={
-                                slot.appointment.status === 'COMPLETED' ||
-                                slot.appointment.status === 'CANCELED'
-                              }
-                            />
-                            <TinyActionButton
-                              title="Concluir"
-                              onClick={() =>
-                                void onChangeAppointmentStatus(
-                                  slot.appointment!.id,
-                                  'COMPLETED',
-                                )
-                              }
-                              highlight
-                              disabled={
-                                slot.appointment.status === 'COMPLETED' ||
-                                slot.appointment.status === 'CANCELED'
-                              }
-                            />
-                            <TinyActionButton
-                              title="Cancelar"
-                              onClick={() => onCancelAppointment(slot.appointment!.id)}
-                              danger
-                              disabled={
-                                slot.appointment.status === 'COMPLETED' ||
-                                slot.appointment.status === 'CANCELED'
-                              }
-                            />
+                            <div className="mt-3 flex flex-wrap gap-1.5">
+                              <TinyActionButton
+                                title={isFocusedConsultation ? 'Prontuario ativo' : 'Prontuario'}
+                                onClick={() =>
+                                  onSelectConsultationForMedicalRecord(
+                                    slot.appointment!.id,
+                                  )
+                                }
+                                highlight
+                              />
+                              <TinyActionButton
+                                title="Confirmar"
+                                onClick={() =>
+                                  void onChangeAppointmentStatus(
+                                    slot.appointment!.id,
+                                    'CONFIRMED',
+                                  )
+                                }
+                                disabled={
+                                  slot.appointment.status === 'COMPLETED' ||
+                                  slot.appointment.status === 'CANCELED'
+                                }
+                              />
+                              <TinyActionButton
+                                title="Atender"
+                                onClick={() =>
+                                  void onChangeAppointmentStatus(
+                                    slot.appointment!.id,
+                                    'IN_PROGRESS',
+                                  )
+                                }
+                                disabled={
+                                  slot.appointment.status === 'COMPLETED' ||
+                                  slot.appointment.status === 'CANCELED'
+                                }
+                              />
+                              <TinyActionButton
+                                title="Concluir"
+                                onClick={() =>
+                                  void onChangeAppointmentStatus(
+                                    slot.appointment!.id,
+                                    'COMPLETED',
+                                  )
+                                }
+                                highlight
+                                disabled={
+                                  slot.appointment.status === 'COMPLETED' ||
+                                  slot.appointment.status === 'CANCELED'
+                                }
+                              />
+                              <TinyActionButton
+                                title="Cancelar"
+                                onClick={() => onCancelAppointment(slot.appointment!.id)}
+                                danger
+                                disabled={
+                                  slot.appointment.status === 'COMPLETED' ||
+                                  slot.appointment.status === 'CANCELED'
+                                }
+                              />
+                            </div>
                           </div>
-                        </div>
-                      ) : (
-                        <div className="rounded-md border border-dashed border-slate-300 bg-white px-3 py-3 text-sm text-slate-500">
-                          Horario livre
-                        </div>
+                        ) : (
+                          <div className="rounded-md border border-dashed border-slate-300 bg-white px-3 py-3 text-sm text-slate-500">
+                            Horario livre
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div
+                id="medical-record-workspace"
+                className="mt-6 overflow-hidden border border-slate-200 bg-white"
+              >
+                <div className="grid xl:grid-cols-[300px_1fr]">
+                  <aside className="border-b border-slate-200 bg-slate-50/70 px-5 py-5 xl:border-b-0 xl:border-r">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                      Triagem do dia
+                    </p>
+                    <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                      Atendimentos para prontuario
+                    </h3>
+                    <p className="mt-2 text-xs text-slate-600">
+                      Selecione uma consulta para abrir ou continuar o prontuario.
+                    </p>
+
+                    {sortedAppointments.length === 0 ? (
+                      <p className="mt-5 text-sm text-slate-600">
+                        Nenhuma consulta cadastrada para este dia.
+                      </p>
+                    ) : (
+                      <ul className="mt-4 space-y-2">
+                        {sortedAppointments.map((appointment) => {
+                          const active = appointment.id === selectedConsultationId;
+
+                          return (
+                            <li key={appointment.id}>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onSelectConsultationForMedicalRecord(appointment.id)
+                                }
+                                className={`w-full border px-3 py-3 text-left transition ${
+                                  active
+                                    ? 'border-teal-300 bg-teal-50'
+                                    : 'border-slate-200 bg-white hover:border-teal-200 hover:bg-teal-50/40'
+                                }`}
+                              >
+                                <p className="text-sm font-semibold text-slate-900">
+                                  {formatTime(appointment.startsAt)} - {appointment.patient.name}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-600">
+                                  {appointment.reason}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {appointment.tutor.name}
+                                </p>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </aside>
+
+                  <div className="px-5 py-5">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                          Prontuario clinico
+                        </p>
+                        <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                          Registro de atendimento veterinario
+                        </h3>
+                      </div>
+                      {selectedMedicalRecord && (
+                        <MedicalRecordStatusBadge status={selectedMedicalRecord.status} />
                       )}
                     </div>
-                  ))}
+
+                    {!selectedConsultation ? (
+                      <p className="mt-6 text-sm text-slate-600">
+                        Selecione uma consulta na lateral para abrir o prontuario.
+                      </p>
+                    ) : isMedicalRecordLoading ? (
+                      <p className="mt-6 text-sm text-slate-600">
+                        Carregando prontuario da consulta selecionada...
+                      </p>
+                    ) : !selectedMedicalRecord ? (
+                      <div className="mt-6 border border-dashed border-slate-300 bg-slate-50 px-4 py-5">
+                        <p className="text-sm text-slate-700">
+                          O prontuario ainda nao foi iniciado para{' '}
+                          <span className="font-semibold">
+                            {selectedConsultation.patient.name}
+                          </span>
+                          .
+                        </p>
+                        <p className="mt-2 text-xs text-slate-600">
+                          Tutor: {selectedConsultation.tutor.name} | Vet:{' '}
+                          {selectedConsultation.veterinarianName}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void onStartMedicalRecord();
+                          }}
+                          disabled={
+                            isMedicalRecordLoading ||
+                            isMedicalRecordSaving ||
+                            isMedicalRecordFinalizing ||
+                            selectedConsultation.status === 'CANCELED'
+                          }
+                          className="mt-4 rounded-md bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Iniciar prontuario
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="mt-5 grid gap-5">
+                        <div className="grid gap-2 border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600 sm:grid-cols-2">
+                          <p>
+                            <span className="font-semibold text-slate-800">Paciente:</span>{' '}
+                            {selectedConsultation.patient.name}
+                          </p>
+                          <p>
+                            <span className="font-semibold text-slate-800">Tutor:</span>{' '}
+                            {selectedConsultation.tutor.name}
+                          </p>
+                          <p>
+                            <span className="font-semibold text-slate-800">Consulta:</span>{' '}
+                            {formatDateTime(selectedConsultation.startsAt)}
+                          </p>
+                          <p>
+                            <span className="font-semibold text-slate-800">Veterinario:</span>{' '}
+                            {selectedConsultation.veterinarianName}
+                          </p>
+                        </div>
+
+                        <div className="grid gap-4">
+                          <label className="grid gap-1.5 text-sm text-slate-700">
+                            Queixa principal *
+                            <input
+                              value={medicalRecordForm.chiefComplaint}
+                              onChange={(event) =>
+                                onMedicalRecordFieldChange(
+                                  'chiefComplaint',
+                                  event.target.value,
+                                )
+                              }
+                              disabled={selectedConsultationIsFinalizedRecord}
+                              className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                            />
+                          </label>
+
+                          <label className="grid gap-1.5 text-sm text-slate-700">
+                            Inicio dos sintomas *
+                            <input
+                              value={medicalRecordForm.symptomsOnset}
+                              onChange={(event) =>
+                                onMedicalRecordFieldChange(
+                                  'symptomsOnset',
+                                  event.target.value,
+                                )
+                              }
+                              disabled={selectedConsultationIsFinalizedRecord}
+                              className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                            />
+                          </label>
+
+                          <div className="grid gap-4 lg:grid-cols-2">
+                            <label className="grid gap-1.5 text-sm text-slate-700">
+                              Historico clinico *
+                              <textarea
+                                rows={4}
+                                value={medicalRecordForm.clinicalHistory}
+                                onChange={(event) =>
+                                  onMedicalRecordFieldChange(
+                                    'clinicalHistory',
+                                    event.target.value,
+                                  )
+                                }
+                                disabled={selectedConsultationIsFinalizedRecord}
+                                className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                              />
+                            </label>
+
+                            <label className="grid gap-1.5 text-sm text-slate-700">
+                              Exame fisico *
+                              <textarea
+                                rows={4}
+                                value={medicalRecordForm.physicalExam}
+                                onChange={(event) =>
+                                  onMedicalRecordFieldChange(
+                                    'physicalExam',
+                                    event.target.value,
+                                  )
+                                }
+                                disabled={selectedConsultationIsFinalizedRecord}
+                                className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                              />
+                            </label>
+                          </div>
+
+                          <label className="grid gap-1.5 text-sm text-slate-700">
+                            Diagnostico presuntivo *
+                            <textarea
+                              rows={3}
+                              value={medicalRecordForm.presumptiveDiagnosis}
+                              onChange={(event) =>
+                                onMedicalRecordFieldChange(
+                                  'presumptiveDiagnosis',
+                                  event.target.value,
+                                )
+                              }
+                              disabled={selectedConsultationIsFinalizedRecord}
+                              className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                            />
+                          </label>
+
+                          <div className="grid gap-4 lg:grid-cols-2">
+                            <label className="grid gap-1.5 text-sm text-slate-700">
+                              Conduta *
+                              <textarea
+                                rows={4}
+                                value={medicalRecordForm.conduct}
+                                onChange={(event) =>
+                                  onMedicalRecordFieldChange(
+                                    'conduct',
+                                    event.target.value,
+                                  )
+                                }
+                                disabled={selectedConsultationIsFinalizedRecord}
+                                className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                              />
+                            </label>
+
+                            <label className="grid gap-1.5 text-sm text-slate-700">
+                              Orientacoes *
+                              <textarea
+                                rows={4}
+                                value={medicalRecordForm.guidance}
+                                onChange={(event) =>
+                                  onMedicalRecordFieldChange(
+                                    'guidance',
+                                    event.target.value,
+                                  )
+                                }
+                                disabled={selectedConsultationIsFinalizedRecord}
+                                className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                              />
+                            </label>
+                          </div>
+
+                          <label className="grid gap-1.5 text-sm text-slate-700">
+                            Data sugerida para retorno
+                            <input
+                              type="date"
+                              value={medicalRecordForm.recommendedReturnAt}
+                              onChange={(event) =>
+                                onMedicalRecordFieldChange(
+                                  'recommendedReturnAt',
+                                  event.target.value,
+                                )
+                              }
+                              disabled={selectedConsultationIsFinalizedRecord}
+                              className="max-w-[240px] rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                            />
+                          </label>
+                        </div>
+
+                        <div className="flex flex-wrap gap-3 border-t border-slate-200 pt-4">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void onSaveMedicalRecordDraft();
+                            }}
+                            disabled={
+                              isMedicalRecordSaving ||
+                              isMedicalRecordFinalizing ||
+                              selectedConsultationIsFinalizedRecord
+                            }
+                            className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-55"
+                          >
+                            {isMedicalRecordSaving ? 'Salvando...' : 'Salvar rascunho'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void onFinalizeMedicalRecord();
+                            }}
+                            disabled={
+                              isMedicalRecordSaving ||
+                              isMedicalRecordFinalizing ||
+                              !medicalRecordCanFinalize
+                            }
+                            className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-55"
+                          >
+                            {isMedicalRecordFinalizing
+                              ? 'Finalizando...'
+                              : 'Finalizar prontuario'}
+                          </button>
+                        </div>
+
+                        <p className="text-xs text-slate-500">
+                          Campos com * sao obrigatorios para finalizacao do prontuario.
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </section>
@@ -2977,6 +3824,19 @@ function MetricLine({ label, value }: { label: string; value: string }) {
 
 function StatusBadge({ status }: { status: AppointmentStatus }) {
   const visual = STATUS_VISUAL[status];
+
+  return (
+    <span
+      className={`inline-flex items-center gap-2 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium ${visual.textClass}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${visual.dotClass}`} />
+      {visual.label}
+    </span>
+  );
+}
+
+function MedicalRecordStatusBadge({ status }: { status: MedicalRecordStatus }) {
+  const visual = MEDICAL_RECORD_STATUS_VISUAL[status];
 
   return (
     <span
