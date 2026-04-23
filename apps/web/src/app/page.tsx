@@ -307,6 +307,10 @@ function normalizeOptionalText(value: string): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
+function normalizeDocument(value: string): string {
+  return value.replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+}
+
 function normalizeOptionalWeight(value: string): number | undefined {
   const normalized = value.trim().replace(',', '.');
   if (!normalized) {
@@ -524,7 +528,6 @@ export default function Home() {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const [isProfileSaving, setIsProfileSaving] = useState(false);
   const [isAppointmentSaving, setIsAppointmentSaving] = useState(false);
-  const [isTutorSaving, setIsTutorSaving] = useState(false);
   const [isPatientSaving, setIsPatientSaving] = useState(false);
 
   const [statusMessage, setStatusMessage] = useState('');
@@ -545,16 +548,13 @@ export default function Home() {
     password: 'easyvet123',
   });
 
-  const [tutorForm, setTutorForm] = useState({
-    name: '',
-    document: '',
-    phone: '',
-    email: '',
-    address: '',
-  });
-
   const [patientForm, setPatientForm] = useState({
-    tutorId: '',
+    tutorDocument: '',
+    tutorResolvedId: '',
+    tutorName: '',
+    tutorPhone: '',
+    tutorEmail: '',
+    tutorAddress: '',
     name: '',
     species: '',
     breed: '',
@@ -690,6 +690,32 @@ export default function Home() {
     return sortTutors(tutors);
   }, [tutors]);
 
+  const selectedTutorByDocument = useMemo(() => {
+    const resolvedById = sortedTutors.find(
+      (tutor) => tutor.id === patientForm.tutorResolvedId,
+    );
+    if (resolvedById) {
+      return resolvedById;
+    }
+
+    const normalizedDocument = normalizeDocument(patientForm.tutorDocument);
+    if (!normalizedDocument) {
+      return null;
+    }
+
+    return (
+      sortedTutors.find((tutor) => {
+        if (!tutor.document) {
+          return false;
+        }
+
+        return normalizeDocument(tutor.document) === normalizedDocument;
+      }) ?? null
+    );
+  }, [patientForm.tutorDocument, patientForm.tutorResolvedId, sortedTutors]);
+
+  const isExistingTutorSelected = Boolean(selectedTutorByDocument);
+
   const bootstrapWorkspace = useCallback(async () => {
     if (!authUser) {
       return;
@@ -721,10 +747,6 @@ export default function Home() {
         patientId: current.patientId || patientData[0]?.id || '',
         veterinarianName: current.veterinarianName || authUser.name,
       }));
-      setPatientForm((current) => ({
-        ...current,
-        tutorId: current.tutorId || tutorData[0]?.id || '',
-      }));
 
       setIsDemoMode(false);
     } catch {
@@ -739,10 +761,6 @@ export default function Home() {
         ...current,
         patientId: current.patientId || demoDataset.patients[0]?.id || '',
         veterinarianName: current.veterinarianName || authUser.name,
-      }));
-      setPatientForm((current) => ({
-        ...current,
-        tutorId: current.tutorId || demoDataset.tutors[0]?.id || '',
       }));
 
       setIsDemoMode(true);
@@ -764,18 +782,18 @@ export default function Home() {
   }, [authUser, bootstrapWorkspace]);
 
   useEffect(() => {
-    if (tutors.length === 0) {
+    if (!patientForm.tutorResolvedId) {
       return;
     }
 
-    const tutorExists = tutors.some((tutor) => tutor.id === patientForm.tutorId);
+    const tutorExists = tutors.some((tutor) => tutor.id === patientForm.tutorResolvedId);
     if (!tutorExists) {
       setPatientForm((current) => ({
         ...current,
-        tutorId: tutors[0]?.id ?? '',
+        tutorResolvedId: '',
       }));
     }
-  }, [patientForm.tutorId, tutors]);
+  }, [patientForm.tutorResolvedId, tutors]);
 
   async function onLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -845,15 +863,13 @@ export default function Home() {
     setErrorMessage('');
     setStatusMessage('Sessao finalizada.');
     setActiveSection('consultations');
-    setTutorForm({
-      name: '',
-      document: '',
-      phone: '',
-      email: '',
-      address: '',
-    });
     setPatientForm({
-      tutorId: '',
+      tutorDocument: '',
+      tutorResolvedId: '',
+      tutorName: '',
+      tutorPhone: '',
+      tutorEmail: '',
+      tutorAddress: '',
       name: '',
       species: '',
       breed: '',
@@ -991,67 +1007,44 @@ export default function Home() {
     }
   }
 
-  async function onCreateTutor(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  function onLookupTutorByDocument() {
+    setStatusMessage('');
+    setErrorMessage('');
 
-    if (!authUser) {
+    const normalizedDocument = normalizeDocument(patientForm.tutorDocument);
+    if (!normalizedDocument) {
+      setErrorMessage('Informe o documento do tutor para buscar.');
       return;
     }
 
-    setStatusMessage('');
-    setErrorMessage('');
-    setIsTutorSaving(true);
-
-    try {
-      const name = tutorForm.name.trim();
-      if (!name) {
-        throw new Error('Informe o nome do tutor.');
+    const foundTutor = sortedTutors.find((tutor) => {
+      if (!tutor.document) {
+        return false;
       }
 
-      const tutorPayload = {
-        name,
-        document: normalizeOptionalText(tutorForm.document),
-        phone: normalizeOptionalText(tutorForm.phone),
-        email: normalizeOptionalText(tutorForm.email),
-        address: normalizeOptionalText(tutorForm.address),
-      };
+      return normalizeDocument(tutor.document) === normalizedDocument;
+    });
 
-      let createdTutor: Tutor;
-
-      if (isDemoMode) {
-        createdTutor = {
-          id: `demo-tutor-${Date.now()}`,
-          name,
-          document: tutorPayload.document ?? null,
-          phone: tutorPayload.phone ?? null,
-          email: tutorPayload.email ?? null,
-          address: tutorPayload.address ?? null,
-        };
-      } else {
-        createdTutor = await request<Tutor>('/tutors', {
-          method: 'POST',
-          body: JSON.stringify(tutorPayload),
-        });
-      }
-
-      setTutors((current) => sortTutors([createdTutor, ...current]));
+    if (!foundTutor) {
       setPatientForm((current) => ({
         ...current,
-        tutorId: createdTutor.id,
+        tutorResolvedId: '',
       }));
-      setTutorForm({
-        name: '',
-        document: '',
-        phone: '',
-        email: '',
-        address: '',
-      });
-      setStatusMessage('Tutor cadastrado com sucesso.');
-    } catch (error) {
-      setErrorMessage(normalizeErrorMessage(error, 'Falha ao cadastrar tutor.'));
-    } finally {
-      setIsTutorSaving(false);
+      setStatusMessage(
+        'Tutor nao encontrado. Complete os dados para criar um novo tutor junto com o paciente.',
+      );
+      return;
     }
+
+    setPatientForm((current) => ({
+      ...current,
+      tutorResolvedId: foundTutor.id,
+      tutorName: foundTutor.name,
+      tutorPhone: foundTutor.phone ?? '',
+      tutorEmail: foundTutor.email ?? '',
+      tutorAddress: foundTutor.address ?? '',
+    }));
+    setStatusMessage(`Tutor localizado: ${foundTutor.name}.`);
   }
 
   async function onCreatePatient(event: FormEvent<HTMLFormElement>) {
@@ -1066,11 +1059,12 @@ export default function Home() {
     setIsPatientSaving(true);
 
     try {
+      const normalizedDocument = normalizeDocument(patientForm.tutorDocument);
       const name = patientForm.name.trim();
       const species = patientForm.species.trim();
 
-      if (!patientForm.tutorId) {
-        throw new Error('Selecione um tutor para continuar.');
+      if (!normalizedDocument) {
+        throw new Error('Informe o documento do tutor.');
       }
 
       if (!name) {
@@ -1086,8 +1080,60 @@ export default function Home() {
         throw new Error('Peso atual invalido. Use apenas numeros.');
       }
 
+      const resolvedTutor =
+        selectedTutorByDocument ??
+        sortedTutors.find((tutor) => {
+          if (!tutor.document) {
+            return false;
+          }
+
+          return normalizeDocument(tutor.document) === normalizedDocument;
+        }) ??
+        null;
+
+      let tutorToUse: Tutor;
+      let createdNewTutor = false;
+
+      if (resolvedTutor) {
+        tutorToUse = resolvedTutor;
+      } else {
+        const tutorName = patientForm.tutorName.trim();
+        if (!tutorName) {
+          throw new Error(
+            'Tutor nao localizado. Preencha o nome do tutor para concluir o cadastro combinado.',
+          );
+        }
+
+        const tutorPayload = {
+          name: tutorName,
+          document: patientForm.tutorDocument.trim(),
+          phone: normalizeOptionalText(patientForm.tutorPhone),
+          email: normalizeOptionalText(patientForm.tutorEmail),
+          address: normalizeOptionalText(patientForm.tutorAddress),
+        };
+
+        if (isDemoMode) {
+          tutorToUse = {
+            id: `demo-tutor-${Date.now()}`,
+            name: tutorPayload.name,
+            document: tutorPayload.document,
+            phone: tutorPayload.phone ?? null,
+            email: tutorPayload.email ?? null,
+            address: tutorPayload.address ?? null,
+          };
+        } else {
+          tutorToUse = await request<Tutor>('/tutors', {
+            method: 'POST',
+            body: JSON.stringify(tutorPayload),
+          });
+        }
+
+        createdNewTutor = true;
+        setTutors((current) => sortTutors([tutorToUse, ...current]));
+      }
+
       const patientPayload = {
-        tutorId: patientForm.tutorId,
+        tutorId: tutorToUse.id,
         name,
         species,
         breed: normalizeOptionalText(patientForm.breed),
@@ -1123,6 +1169,12 @@ export default function Home() {
       }));
       setPatientForm((current) => ({
         ...current,
+        tutorResolvedId: tutorToUse.id,
+        tutorDocument: tutorToUse.document ?? current.tutorDocument,
+        tutorName: tutorToUse.name,
+        tutorPhone: tutorToUse.phone ?? '',
+        tutorEmail: tutorToUse.email ?? '',
+        tutorAddress: tutorToUse.address ?? '',
         name: '',
         species: '',
         breed: '',
@@ -1130,7 +1182,11 @@ export default function Home() {
         birthDate: '',
         currentWeight: '',
       }));
-      setStatusMessage('Paciente cadastrado com sucesso.');
+      setStatusMessage(
+        createdNewTutor
+          ? 'Tutor e paciente cadastrados com sucesso.'
+          : 'Paciente cadastrado com tutor existente.',
+      );
     } catch (error) {
       setErrorMessage(normalizeErrorMessage(error, 'Falha ao cadastrar paciente.'));
     } finally {
@@ -1829,253 +1885,249 @@ export default function Home() {
             </section>
           ) : activeSection === 'patients' ? (
             <section className="rise-in mx-auto grid w-full max-w-6xl gap-6 xl:grid-cols-[420px_1fr]">
-              <div className="grid gap-6">
-                <form className="border border-slate-200 bg-white px-5 py-5" onSubmit={onCreateTutor}>
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                    Cadastro de tutor
-                  </p>
-                  <h3 className="mt-2 text-xl font-semibold text-slate-900">
-                    Novo responsavel
-                  </h3>
+              <form className="border border-slate-200 bg-white px-5 py-5" onSubmit={onCreatePatient}>
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  Cadastro Integrado
+                </p>
+                <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                  Tutor e paciente no mesmo formulario
+                </h3>
+                <p className="mt-2 text-sm text-slate-600">
+                  Para cadastrar outro animal de um tutor existente, localize primeiro pelo documento.
+                </p>
 
-                  <div className="mt-5 grid gap-4">
+                <div className="mt-5 grid gap-4">
+                  <div className="grid gap-2">
                     <label className="grid gap-1.5 text-sm text-slate-700">
-                      Nome completo
-                      <input
-                        required
-                        value={tutorForm.name}
-                        onChange={(event) =>
-                          setTutorForm((current) => ({
-                            ...current,
-                            name: event.target.value,
-                          }))
-                        }
-                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
-                      />
-                    </label>
-
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="grid gap-1.5 text-sm text-slate-700">
-                        Documento
-                        <input
-                          value={tutorForm.document}
-                          onChange={(event) =>
-                            setTutorForm((current) => ({
-                              ...current,
-                              document: event.target.value,
-                            }))
-                          }
-                          placeholder="CPF ou RG"
-                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
-                        />
-                      </label>
-                      <label className="grid gap-1.5 text-sm text-slate-700">
-                        Telefone
-                        <input
-                          value={tutorForm.phone}
-                          onChange={(event) =>
-                            setTutorForm((current) => ({
-                              ...current,
-                              phone: event.target.value,
-                            }))
-                          }
-                          placeholder="(11) 99999-0000"
-                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
-                        />
-                      </label>
-                    </div>
-
-                    <label className="grid gap-1.5 text-sm text-slate-700">
-                      E-mail
-                      <input
-                        type="email"
-                        value={tutorForm.email}
-                        onChange={(event) =>
-                          setTutorForm((current) => ({
-                            ...current,
-                            email: event.target.value,
-                          }))
-                        }
-                        placeholder="contato@dominio.com"
-                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
-                      />
-                    </label>
-
-                    <label className="grid gap-1.5 text-sm text-slate-700">
-                      Endereco
-                      <input
-                        value={tutorForm.address}
-                        onChange={(event) =>
-                          setTutorForm((current) => ({
-                            ...current,
-                            address: event.target.value,
-                          }))
-                        }
-                        placeholder="Rua, numero e complemento"
-                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
-                      />
-                    </label>
-
-                    <button
-                      type="submit"
-                      disabled={isTutorSaving}
-                      className="mt-1 rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-65"
-                    >
-                      {isTutorSaving ? 'Salvando...' : 'Cadastrar tutor'}
-                    </button>
-                  </div>
-                </form>
-
-                <form className="border border-slate-200 bg-white px-5 py-5" onSubmit={onCreatePatient}>
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                    Cadastro de paciente
-                  </p>
-                  <h3 className="mt-2 text-xl font-semibold text-slate-900">
-                    Novo animal
-                  </h3>
-
-                  <div className="mt-5 grid gap-4">
-                    <label className="grid gap-1.5 text-sm text-slate-700">
-                      Tutor responsavel
-                      <select
-                        required
-                        value={patientForm.tutorId}
-                        onChange={(event) =>
-                          setPatientForm((current) => ({
-                            ...current,
-                            tutorId: event.target.value,
-                          }))
-                        }
-                        disabled={sortedTutors.length === 0}
-                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
-                      >
-                        <option value="">Selecione</option>
-                        {sortedTutors.map((tutor) => (
-                          <option key={tutor.id} value={tutor.id}>
-                            {tutor.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="grid gap-1.5 text-sm text-slate-700">
-                      Nome do paciente
-                      <input
-                        required
-                        value={patientForm.name}
-                        onChange={(event) =>
-                          setPatientForm((current) => ({
-                            ...current,
-                            name: event.target.value,
-                          }))
-                        }
-                        disabled={sortedTutors.length === 0}
-                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
-                      />
-                    </label>
-
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="grid gap-1.5 text-sm text-slate-700">
-                        Especie
+                      Documento do tutor
+                      <div className="grid grid-cols-[1fr_auto] gap-2">
                         <input
                           required
-                          value={patientForm.species}
+                          value={patientForm.tutorDocument}
                           onChange={(event) =>
                             setPatientForm((current) => ({
                               ...current,
-                              species: event.target.value,
+                              tutorDocument: event.target.value,
+                              tutorResolvedId: '',
+                              ...(current.tutorResolvedId
+                                ? {
+                                    tutorName: '',
+                                    tutorPhone: '',
+                                    tutorEmail: '',
+                                    tutorAddress: '',
+                                  }
+                                : {}),
                             }))
                           }
-                          disabled={sortedTutors.length === 0}
-                          placeholder="Canino, Felino..."
-                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                          placeholder="CPF/CNPJ/RG"
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
                         />
-                      </label>
-                      <label className="grid gap-1.5 text-sm text-slate-700">
-                        Raca
-                        <input
-                          value={patientForm.breed}
-                          onChange={(event) =>
-                            setPatientForm((current) => ({
-                              ...current,
-                              breed: event.target.value,
-                            }))
-                          }
-                          disabled={sortedTutors.length === 0}
-                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
-                        />
-                      </label>
-                    </div>
-
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      <label className="grid gap-1.5 text-sm text-slate-700">
-                        Sexo
-                        <select
-                          value={patientForm.sex}
-                          onChange={(event) =>
-                            setPatientForm((current) => ({
-                              ...current,
-                              sex: event.target.value as PatientSex,
-                            }))
-                          }
-                          disabled={sortedTutors.length === 0}
-                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                        <button
+                          type="button"
+                          onClick={onLookupTutorByDocument}
+                          className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 transition hover:bg-slate-100"
                         >
-                          <option value="UNKNOWN">Nao informado</option>
-                          <option value="MALE">Macho</option>
-                          <option value="FEMALE">Femea</option>
-                        </select>
-                      </label>
-
-                      <label className="grid gap-1.5 text-sm text-slate-700">
-                        Nascimento
-                        <input
-                          type="date"
-                          value={patientForm.birthDate}
-                          onChange={(event) =>
-                            setPatientForm((current) => ({
-                              ...current,
-                              birthDate: event.target.value,
-                            }))
-                          }
-                          disabled={sortedTutors.length === 0}
-                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
-                        />
-                      </label>
-
-                      <label className="grid gap-1.5 text-sm text-slate-700">
-                        Peso (kg)
-                        <input
-                          value={patientForm.currentWeight}
-                          onChange={(event) =>
-                            setPatientForm((current) => ({
-                              ...current,
-                              currentWeight: event.target.value,
-                            }))
-                          }
-                          disabled={sortedTutors.length === 0}
-                          placeholder="Ex.: 12.5"
-                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
-                        />
-                      </label>
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={isPatientSaving || sortedTutors.length === 0}
-                      className="mt-1 rounded-md bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-65"
-                    >
-                      {isPatientSaving ? 'Salvando...' : 'Cadastrar paciente'}
-                    </button>
-
-                    {sortedTutors.length === 0 && (
-                      <p className="text-xs text-amber-700">
-                        Cadastre um tutor antes de registrar pacientes.
+                          Localizar
+                        </button>
+                      </div>
+                    </label>
+                    {isExistingTutorSelected ? (
+                      <p className="text-xs text-emerald-700">
+                        Tutor localizado: {selectedTutorByDocument?.name}. Prossiga para cadastrar outro animal.
+                      </p>
+                    ) : (
+                      <p className="text-xs text-slate-500">
+                        Se nao localizar, preencha os dados do tutor para criar novo cadastro junto com o paciente.
                       </p>
                     )}
                   </div>
-                </form>
-              </div>
+
+                  <div className="border-t border-slate-200 pt-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                      Dados do tutor
+                    </p>
+                    <div className="mt-3 grid gap-3">
+                      <label className="grid gap-1.5 text-sm text-slate-700">
+                        Nome completo
+                        <input
+                          required={!isExistingTutorSelected}
+                          value={patientForm.tutorName}
+                          onChange={(event) =>
+                            setPatientForm((current) => ({
+                              ...current,
+                              tutorName: event.target.value,
+                            }))
+                          }
+                          disabled={isExistingTutorSelected}
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                        />
+                      </label>
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="grid gap-1.5 text-sm text-slate-700">
+                          Telefone
+                          <input
+                            value={patientForm.tutorPhone}
+                            onChange={(event) =>
+                              setPatientForm((current) => ({
+                                ...current,
+                                tutorPhone: event.target.value,
+                              }))
+                            }
+                            disabled={isExistingTutorSelected}
+                            placeholder="(11) 99999-0000"
+                            className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                          />
+                        </label>
+
+                        <label className="grid gap-1.5 text-sm text-slate-700">
+                          E-mail
+                          <input
+                            type="email"
+                            value={patientForm.tutorEmail}
+                            onChange={(event) =>
+                              setPatientForm((current) => ({
+                                ...current,
+                                tutorEmail: event.target.value,
+                              }))
+                            }
+                            disabled={isExistingTutorSelected}
+                            placeholder="contato@dominio.com"
+                            className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                          />
+                        </label>
+                      </div>
+
+                      <label className="grid gap-1.5 text-sm text-slate-700">
+                        Endereco
+                        <input
+                          value={patientForm.tutorAddress}
+                          onChange={(event) =>
+                            setPatientForm((current) => ({
+                              ...current,
+                              tutorAddress: event.target.value,
+                            }))
+                          }
+                          disabled={isExistingTutorSelected}
+                          placeholder="Rua, numero e complemento"
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200 disabled:cursor-not-allowed disabled:bg-slate-100"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-200 pt-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                      Dados do paciente
+                    </p>
+                    <div className="mt-3 grid gap-3">
+                      <label className="grid gap-1.5 text-sm text-slate-700">
+                        Nome do paciente
+                        <input
+                          required
+                          value={patientForm.name}
+                          onChange={(event) =>
+                            setPatientForm((current) => ({
+                              ...current,
+                              name: event.target.value,
+                            }))
+                          }
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                        />
+                      </label>
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="grid gap-1.5 text-sm text-slate-700">
+                          Especie
+                          <input
+                            required
+                            value={patientForm.species}
+                            onChange={(event) =>
+                              setPatientForm((current) => ({
+                                ...current,
+                                species: event.target.value,
+                              }))
+                            }
+                            placeholder="Canino, Felino..."
+                            className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                          />
+                        </label>
+                        <label className="grid gap-1.5 text-sm text-slate-700">
+                          Raca
+                          <input
+                            value={patientForm.breed}
+                            onChange={(event) =>
+                              setPatientForm((current) => ({
+                                ...current,
+                                breed: event.target.value,
+                              }))
+                            }
+                            className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                          />
+                        </label>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <label className="grid gap-1.5 text-sm text-slate-700">
+                          Sexo
+                          <select
+                            value={patientForm.sex}
+                            onChange={(event) =>
+                              setPatientForm((current) => ({
+                                ...current,
+                                sex: event.target.value as PatientSex,
+                              }))
+                            }
+                            className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                          >
+                            <option value="UNKNOWN">Nao informado</option>
+                            <option value="MALE">Macho</option>
+                            <option value="FEMALE">Femea</option>
+                          </select>
+                        </label>
+
+                        <label className="grid gap-1.5 text-sm text-slate-700">
+                          Nascimento
+                          <input
+                            type="date"
+                            value={patientForm.birthDate}
+                            onChange={(event) =>
+                              setPatientForm((current) => ({
+                                ...current,
+                                birthDate: event.target.value,
+                              }))
+                            }
+                            className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                          />
+                        </label>
+
+                        <label className="grid gap-1.5 text-sm text-slate-700">
+                          Peso (kg)
+                          <input
+                            value={patientForm.currentWeight}
+                            onChange={(event) =>
+                              setPatientForm((current) => ({
+                                ...current,
+                                currentWeight: event.target.value,
+                              }))
+                            }
+                            placeholder="Ex.: 12.5"
+                            className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isPatientSaving}
+                    className="mt-1 rounded-md bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-65"
+                  >
+                    {isPatientSaving ? 'Salvando...' : 'Salvar cadastro integrado'}
+                  </button>
+                </div>
+              </form>
 
               <div className="border border-slate-200 bg-white">
                 <div className="border-b border-slate-200 px-5 py-4">
