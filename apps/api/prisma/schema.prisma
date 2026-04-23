@@ -13,6 +13,15 @@ enum PatientSex {
   UNKNOWN
 }
 
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+  NO_SHOW
+}
+
 model Tutor {
   id        String    @id @default(cuid())
   name      String
@@ -25,6 +34,7 @@ model Tutor {
   deletedAt DateTime?
 
   patients Patient[]
+  appointments Appointment[]
 
   @@index([name])
 }
@@ -43,8 +53,33 @@ model Patient {
   deletedAt     DateTime?
 
   tutor Tutor @relation(fields: [tutorId], references: [id])
+  appointments Appointment[]
 
   @@index([name])
+  @@index([tutorId])
+}
+
+model Appointment {
+  id               String            @id @default(cuid())
+  tutorId          String
+  patientId        String
+  veterinarianName String
+  startsAt         DateTime
+  endsAt           DateTime
+  reason           String
+  status           AppointmentStatus @default(SCHEDULED)
+  notes            String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  canceledAt       DateTime?
+
+  tutor   Tutor   @relation(fields: [tutorId], references: [id])
+  patient Patient @relation(fields: [patientId], references: [id])
+
+  @@index([startsAt])
+  @@index([status])
+  @@index([veterinarianName, startsAt])
+  @@index([patientId])
   @@index([tutorId])
 }
 

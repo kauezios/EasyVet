@@ -83,3 +83,4 @@ pnpm --filter api test:e2e
 - `docs/compliance/MATRIZ-RBAC.md`
 - `docs/sprint-1/BACKLOG-SPRINT-1.md`
 - `docs/sprint-1/ENTREGA-ITERACAO-01.md`
+- `docs/sprint-1/ENTREGA-ITERACAO-02.md`
