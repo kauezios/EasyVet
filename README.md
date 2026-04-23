@@ -1,38 +1,85 @@
-# EasyVet
+﻿# EasyVet
 
-EasyVet e um projeto para clinicas e consultorios veterinarios com foco em prontuario digital, agenda clinica e operacao diaria.
+EasyVet e uma plataforma para operacao veterinaria com foco em prontuario digital, agenda clinica e gestao diaria.
 
-Este repositorio foi iniciado com dois objetivos:
-- definir a base de governanca e colaboracao entre agentes de desenvolvimento
-- executar o Sprint 0 antes do inicio de codigo de produto
+## Estado atual
 
-## Estrutura criada
+- Sprint 0: concluida (governanca, arquitetura, dados, compliance e backlog).
+- Sprint 1: iniciada com base tecnica e primeiro fluxo funcional de cadastro.
 
-- `docs/agents/AGENT-KIT-EASYVET.md`: kit completo de agentes
-- `docs/agents/TEMPLATE-AGENTE.md`: template padrao para novos agentes
-- `docs/sprint-0/SPRINT-0-PLANO.md`: plano oficial do Sprint 0
-- `docs/sprint-0/BACKLOG-SPRINT-0.md`: backlog priorizado do Sprint 0
-- `docs/sprint-0/KICKOFF-AGENTES.md`: kickoff e tarefas iniciadas por agente
-- `docs/sprint-0/RISCOS-E-MITIGACOES.md`: registro inicial de riscos e mitigacoes
-- `docs/sprint-0/SEED-BACKLOG-SPRINT-1.md`: backlog candidato para a Sprint 1
-- `docs/product/VISAO-PRODUTO.md`: visao do produto
-- `docs/product/MVP-V1.md`: escopo do MVP v1
-- `docs/product/JORNADAS-CRITICAS.md`: fluxos prioritarios
-- `docs/product/GLOSSARIO-CLINICO-E-CAMPOS.md`: padrao clinico e campos obrigatorios
-- `docs/arquitetura/ARQUITETURA-INICIAL.md`: arquitetura inicial
-- `docs/arquitetura/ADR-0001-api-first.md`: decisao arquitetural inicial
-- `docs/arquitetura/PADRAO-API-V1.md`: convencoes de contratos e erros da API
-- `docs/dados/MODELO-DADOS-INICIAL.md`: modelo de dados base
-- `docs/compliance/LGPD-BASELINE.md`: baseline de seguranca e LGPD
-- `docs/compliance/MATRIZ-RBAC.md`: matriz de permissao por perfil
-- `docs/frontend/WIREFRAMES-LOW-FI.md`: wireframes operacionais iniciais
-- `docs/qa/ESTRATEGIA-TESTES-MVP.md`: estrategia de testes do MVP
-- `docs/devops/ESTRATEGIA-CICD-AMBIENTES.md`: estrategia de ambientes e CI/CD
-- `docs/sprint-1/BACKLOG-SPRINT-1.md`: backlog planejado da sprint seguinte
+## Monorepo
 
-## Como usar agora
+- `apps/api`: API NestJS + Prisma + PostgreSQL
+- `apps/web`: Frontend Next.js
+- `docs/`: produto, arquitetura, compliance e sprints
 
-1. Revisar e aprovar os documentos de `docs/product`.
-2. Validar os owners e prioridades em `docs/sprint-0/BACKLOG-SPRINT-0.md`.
-3. Iniciar execucao da Sprint 0 pelas tarefas de prioridade alta.
-4. Registrar decisoes novas na pasta `docs/arquitetura` via novos ADRs.
+## Stack
+
+- Node.js 24+
+- pnpm 9+
+- NestJS 11
+- Prisma 6
+- Next.js 16
+- PostgreSQL 16 (Docker)
+
+## Rodando localmente
+
+1. Instalar dependencias
+
+```bash
+pnpm install
+```
+
+2. Subir banco de dados
+
+```bash
+docker compose up -d
+```
+
+3. Configurar variaveis de ambiente
+
+```bash
+# API
+cp apps/api/.env.example apps/api/.env
+
+# WEB
+cp apps/web/.env.local.example apps/web/.env.local
+```
+
+4. Aplicar migrations
+
+```bash
+pnpm --filter api prisma:migrate:deploy
+```
+
+5. Rodar API e Web
+
+```bash
+# terminal 1
+pnpm api:dev
+
+# terminal 2
+pnpm web:dev
+```
+
+- API: `http://localhost:3001/api/v1`
+- Web: `http://localhost:3000`
+
+## Scripts uteis
+
+```bash
+pnpm lint
+pnpm build
+pnpm test
+pnpm --filter api test:e2e
+```
+
+## Artefatos principais
+
+- `docs/agents/AGENT-KIT-EASYVET.md`
+- `docs/sprint-0/SPRINT-0-PLANO.md`
+- `docs/sprint-0/BACKLOG-SPRINT-0.md`
+- `docs/arquitetura/PADRAO-API-V1.md`
+- `docs/compliance/MATRIZ-RBAC.md`
+- `docs/sprint-1/BACKLOG-SPRINT-1.md`
+- `docs/sprint-1/ENTREGA-ITERACAO-01.md`

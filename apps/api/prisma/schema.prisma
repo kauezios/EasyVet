@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PatientSex {
+  MALE
+  FEMALE
+  UNKNOWN
+}
+
+model Tutor {
+  id        String    @id @default(cuid())
+  name      String
+  document  String?   @unique
+  phone     String?
+  email     String?
+  address   String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  patients Patient[]
+
+  @@index([name])
+}
+
+model Patient {
+  id            String      @id @default(cuid())
+  tutorId       String
+  name          String
+  species       String
+  breed         String?
+  sex           PatientSex  @default(UNKNOWN)
+  birthDate     DateTime?
+  currentWeight Float?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  deletedAt     DateTime?
+
+  tutor Tutor @relation(fields: [tutorId], references: [id])
+
+  @@index([name])
+  @@index([tutorId])
+}
+
+model AuditEvent {
+  id         String   @id @default(cuid())
+  actorId    String?
+  entity     String
+  entityId   String
+  action     String
+  summary    String?
+  createdAt  DateTime @default(now())
+
+  @@index([entity, entityId])
+}
+
