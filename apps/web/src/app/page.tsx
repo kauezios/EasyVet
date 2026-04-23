@@ -83,7 +83,7 @@ type MedicalRecord = {
   finalizedAt: string | null;
 };
 
-type SideMode = 'schedule' | 'record';
+type SideMode = 'schedule' | 'record' | 'profiles';
 type ActorRole = 'ADMIN' | 'VETERINARIAN' | 'RECEPTION';
 
 type AuthUser = {
@@ -98,6 +98,16 @@ type LoginResponse = {
   accessToken: string;
   expiresInSeconds: number;
   user: AuthUser;
+};
+
+type AccessProfile = {
+  id: string;
+  name: string;
+  email: string;
+  role: ActorRole;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type MedicalRecordForm = {
@@ -233,6 +243,7 @@ export default function Home() {
   const [tutors, setTutors] = useState<Tutor[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [profiles, setProfiles] = useState<AccessProfile[]>([]);
   const [medicalRecords, setMedicalRecords] = useState<
     Record<string, MedicalRecord>
   >({});
@@ -254,6 +265,8 @@ export default function Home() {
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isRecordSaving, setIsRecordSaving] = useState(false);
+  const [isProfilesLoading, setIsProfilesLoading] = useState(false);
+  const [isProfileSaving, setIsProfileSaving] = useState(false);
 
   const [appointmentForm, setAppointmentForm] = useState({
     patientId: '',
@@ -267,6 +280,12 @@ export default function Home() {
     useState<MedicalRecordForm>(emptyMedicalRecordForm());
   const [authForm, setAuthForm] = useState({
     email: 'vet@easyvet.local',
+    password: 'easyvet123',
+  });
+  const [profileForm, setProfileForm] = useState({
+    name: '',
+    email: '',
+    role: 'VETERINARIAN' as ActorRole,
     password: 'easyvet123',
   });
 
@@ -288,6 +307,7 @@ export default function Home() {
     [appointments],
   );
   const canFinalizeRecord = activeRole !== 'RECEPTION';
+  const canManageProfiles = activeRole === 'ADMIN';
 
   const metrics = useMemo(() => {
     const total = appointments.length;
@@ -470,10 +490,42 @@ export default function Home() {
       },
     };
 
+    const now = new Date().toISOString();
+    const demoProfiles: AccessProfile[] = [
+      {
+        id: 'demo-user-admin',
+        name: 'Administrador EasyVet',
+        email: 'admin@easyvet.local',
+        role: 'ADMIN',
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: 'demo-user-vet',
+        name: 'Veterinario EasyVet',
+        email: 'vet@easyvet.local',
+        role: 'VETERINARIAN',
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: 'demo-user-reception',
+        name: 'Recepcao EasyVet',
+        email: 'recepcao@easyvet.local',
+        role: 'RECEPTION',
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+
     setTutors(demoTutors);
     setPatients(demoPatients);
     setAppointments(demoAppointments);
     setMedicalRecords(demoRecords);
+    setProfiles(demoProfiles);
     setAppointmentForm((current) => ({
       ...current,
       patientId: demoPatients[0]?.id ?? '',
@@ -525,6 +577,37 @@ export default function Home() {
 
     setActiveRole(authUser.role);
   }, [authUser]);
+
+  const loadProfiles = useCallback(async () => {
+    if (!authUser || !canManageProfiles) {
+      return;
+    }
+
+    setIsProfilesLoading(true);
+
+    try {
+      if (isDemoMode) {
+        return;
+      }
+
+      const data = await request<AccessProfile[]>('/profiles');
+      setProfiles(data);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Falha ao carregar perfis.';
+      setErrorMessage(message);
+    } finally {
+      setIsProfilesLoading(false);
+    }
+  }, [authUser, canManageProfiles, isDemoMode, request]);
+
+  useEffect(() => {
+    if (sideMode !== 'profiles') {
+      return;
+    }
+
+    void loadProfiles();
+  }, [loadProfiles, sideMode]);
 
   const openMedicalRecord = useCallback(
     async (appointment: Appointment) => {
@@ -856,7 +939,112 @@ export default function Home() {
   function onLogout() {
     setAuthToken('');
     setAuthUser(null);
+    setSideMode('schedule');
     setStatusMessage('Sessao encerrada.');
+  }
+
+  async function onCreateProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setStatusMessage('');
+    setErrorMessage('');
+    setIsProfileSaving(true);
+
+    try {
+      const payload = {
+        name: profileForm.name.trim(),
+        email: profileForm.email.trim().toLowerCase(),
+        role: profileForm.role,
+        password: profileForm.password,
+      };
+
+      if (!payload.name || !payload.email || !payload.password) {
+        throw new Error('Preencha nome, e-mail e senha para criar o perfil.');
+      }
+
+      if (isDemoMode) {
+        if (profiles.some((item) => item.email === payload.email)) {
+          throw new Error('PROFILE_EMAIL_ALREADY_EXISTS: E-mail ja cadastrado.');
+        }
+
+        const created: AccessProfile = {
+          id: `demo-user-${Date.now()}`,
+          name: payload.name,
+          email: payload.email,
+          role: payload.role,
+          active: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        setProfiles((current) =>
+          [...current, created].sort((a, b) => a.name.localeCompare(b.name)),
+        );
+        setProfileForm((current) => ({
+          ...current,
+          name: '',
+          email: '',
+        }));
+        setStatusMessage('Perfil criado (demonstracao).');
+        return;
+      }
+
+      const created = await request<AccessProfile>('/profiles', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      setProfiles((current) =>
+        [...current, created].sort((a, b) => a.name.localeCompare(b.name)),
+      );
+      setProfileForm((current) => ({
+        ...current,
+        name: '',
+        email: '',
+      }));
+      setStatusMessage('Perfil criado com sucesso.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Falha ao criar perfil.';
+      setErrorMessage(message);
+    } finally {
+      setIsProfileSaving(false);
+    }
+  }
+
+  async function onUpdateProfileRole(profileId: string, role: ActorRole) {
+    setStatusMessage('');
+    setErrorMessage('');
+
+    try {
+      if (isDemoMode) {
+        setProfiles((current) =>
+          current.map((item) =>
+            item.id === profileId
+              ? {
+                  ...item,
+                  role,
+                  updatedAt: new Date().toISOString(),
+                }
+              : item,
+          ),
+        );
+        setStatusMessage('Perfil atualizado (demonstracao).');
+        return;
+      }
+
+      const updated = await request<AccessProfile>(`/profiles/${profileId}/role`, {
+        method: 'PATCH',
+        body: JSON.stringify({ role }),
+      });
+
+      setProfiles((current) =>
+        current.map((item) => (item.id === profileId ? updated : item)),
+      );
+      setStatusMessage('Perfil atualizado com sucesso.');
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Falha ao atualizar perfil.';
+      setErrorMessage(message);
+    }
   }
 
   async function onFinalizeRecord() {
@@ -1233,7 +1421,7 @@ export default function Home() {
         </section>
 
         <aside className="border-x border-b border-slate-200 bg-white md:border-l-0 md:border-t">
-          <div className="grid grid-cols-2 border-b border-slate-200">
+          <div className="grid grid-cols-3 border-b border-slate-200">
             <button
               type="button"
               onClick={() => setSideMode('schedule')}
@@ -1255,6 +1443,17 @@ export default function Home() {
               }`}
             >
               Prontuario
+            </button>
+            <button
+              type="button"
+              onClick={() => setSideMode('profiles')}
+              className={`px-4 py-3 text-left text-xs uppercase tracking-[0.18em] transition md:px-6 ${
+                sideMode === 'profiles'
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-white text-slate-500 hover:bg-slate-50'
+              }`}
+            >
+              Perfis
             </button>
           </div>
 
@@ -1376,7 +1575,7 @@ export default function Home() {
                 </dl>
               </div>
             </>
-          ) : (
+          ) : sideMode === 'record' ? (
             <>
               <div className="border-b border-slate-200 px-4 py-4 md:px-6">
                 <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
@@ -1519,6 +1718,164 @@ export default function Home() {
                   </p>
                 )}
               </div>
+            </>
+          ) : (
+            <>
+              <div className="border-b border-slate-200 px-4 py-4 md:px-6">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  Gestao de perfis
+                </p>
+                {!authUser ? (
+                  <p className="mt-1 text-sm text-slate-700">
+                    Realize login para acessar a administracao de perfis.
+                  </p>
+                ) : !canManageProfiles ? (
+                  <p className="mt-1 text-sm text-amber-700">
+                    Acesso restrito: somente administradores podem gerenciar perfis.
+                  </p>
+                ) : (
+                  <p className="mt-1 text-sm text-slate-700">
+                    Crie usuarios operacionais e ajuste o papel de acesso da equipe.
+                  </p>
+                )}
+              </div>
+
+              {!authUser ? (
+                <div className="px-4 py-5 text-sm text-slate-500 md:px-6">
+                  Use o bloco de acesso no topo da pagina para iniciar sessao.
+                </div>
+              ) : !canManageProfiles ? (
+                <div className="px-4 py-5 text-sm text-amber-700 md:px-6">
+                  Seu perfil atual e <span className="font-medium">{activeRole}</span>.
+                  Solicite permissao de administrador para continuar.
+                </div>
+              ) : (
+                <>
+                  <form
+                    className="grid gap-3 border-b border-slate-200 px-4 py-4 md:px-6"
+                    onSubmit={onCreateProfile}
+                  >
+                    <input
+                      required
+                      value={profileForm.name}
+                      onChange={(event) =>
+                        setProfileForm((current) => ({
+                          ...current,
+                          name: event.target.value,
+                        }))
+                      }
+                      placeholder="Nome completo"
+                      className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
+                    />
+                    <input
+                      type="email"
+                      required
+                      value={profileForm.email}
+                      onChange={(event) =>
+                        setProfileForm((current) => ({
+                          ...current,
+                          email: event.target.value,
+                        }))
+                      }
+                      placeholder="E-mail profissional"
+                      className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <select
+                        value={profileForm.role}
+                        onChange={(event) =>
+                          setProfileForm((current) => ({
+                            ...current,
+                            role: event.target.value as ActorRole,
+                          }))
+                        }
+                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
+                      >
+                        {ROLE_OPTIONS.map((role) => (
+                          <option key={role.value} value={role.value}>
+                            {role.label}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="password"
+                        required
+                        value={profileForm.password}
+                        onChange={(event) =>
+                          setProfileForm((current) => ({
+                            ...current,
+                            password: event.target.value,
+                          }))
+                        }
+                        placeholder="Senha inicial"
+                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={isProfileSaving}
+                      className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isProfileSaving ? 'Salvando...' : 'Criar perfil'}
+                    </button>
+                  </form>
+
+                  <div className="border-b border-slate-200 px-4 py-3 md:px-6">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                      Equipe cadastrada
+                    </p>
+                  </div>
+
+                  <div className="max-h-[360px] overflow-auto">
+                    {isProfilesLoading ? (
+                      <p className="px-4 py-6 text-sm text-slate-500 md:px-6">
+                        Carregando perfis...
+                      </p>
+                    ) : profiles.length === 0 ? (
+                      <p className="px-4 py-6 text-sm text-slate-500 md:px-6">
+                        Nenhum perfil cadastrado.
+                      </p>
+                    ) : (
+                      <ul className="divide-y divide-slate-200">
+                        {profiles.map((profile) => (
+                          <li
+                            key={profile.id}
+                            className="grid gap-2 px-4 py-3 md:grid-cols-[1fr_auto] md:px-6"
+                          >
+                            <div>
+                              <p className="text-sm font-medium text-slate-900">
+                                {profile.name}
+                              </p>
+                              <p className="text-xs text-slate-500">{profile.email}</p>
+                            </div>
+                            <div className="grid gap-1 text-right">
+                              <select
+                                value={profile.role}
+                                onChange={(event) =>
+                                  void onUpdateProfileRole(
+                                    profile.id,
+                                    event.target.value as ActorRole,
+                                  )
+                                }
+                                className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs outline-none ring-2 ring-transparent transition focus:ring-teal-400"
+                              >
+                                {ROLE_OPTIONS.map((role) => (
+                                  <option key={role.value} value={role.value}>
+                                    {role.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <p className="text-[11px] text-slate-500">
+                                Atualizado em {formatDateTime(profile.updatedAt)}
+                              </p>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </>
+              )}
             </>
           )}
         </aside>
