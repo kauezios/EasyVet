@@ -22,6 +22,11 @@ enum AppointmentStatus {
   NO_SHOW
 }
 
+enum MedicalRecordStatus {
+  DRAFT
+  FINALIZED
+}
+
 model Tutor {
   id        String    @id @default(cuid())
   name      String
@@ -75,12 +80,34 @@ model Appointment {
 
   tutor   Tutor   @relation(fields: [tutorId], references: [id])
   patient Patient @relation(fields: [patientId], references: [id])
+  medicalRecord MedicalRecord?
 
   @@index([startsAt])
   @@index([status])
   @@index([veterinarianName, startsAt])
   @@index([patientId])
   @@index([tutorId])
+}
+
+model MedicalRecord {
+  id                    String            @id @default(cuid())
+  appointmentId         String            @unique
+  status                MedicalRecordStatus @default(DRAFT)
+  chiefComplaint        String?
+  symptomsOnset         String?
+  clinicalHistory       String?
+  physicalExam          String?
+  presumptiveDiagnosis  String?
+  conduct               String?
+  guidance              String?
+  recommendedReturnAt   DateTime?
+  finalizedAt           DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+
+  @@index([status])
 }
 
 model AuditEvent {
