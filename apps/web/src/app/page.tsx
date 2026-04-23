@@ -130,6 +130,7 @@ type AccessProfile = {
 
 type WorkspaceSection =
   | 'consultations'
+  | 'medicalRecords'
   | 'scheduling'
   | 'users'
   | 'patients'
@@ -182,6 +183,11 @@ const SECTION_ITEMS: SectionItem[] = [
     id: 'consultations',
     label: 'Consultas',
     description: 'Agenda clinica do dia e status dos atendimentos.',
+  },
+  {
+    id: 'medicalRecords',
+    label: 'Prontuario',
+    description: 'Documentacao clinica dos atendimentos em andamento.',
   },
   {
     id: 'scheduling',
@@ -985,6 +991,29 @@ export default function Home() {
     );
   }, [selectedConsultationId, sortedAppointments]);
 
+  const nextConsultation = useMemo(() => {
+    const queueStatuses: AppointmentStatus[] = [
+      'SCHEDULED',
+      'CONFIRMED',
+      'IN_PROGRESS',
+    ];
+
+    const queuedAppointments = sortedAppointments.filter((item) =>
+      queueStatuses.includes(item.status),
+    );
+
+    if (queuedAppointments.length === 0) {
+      return null;
+    }
+
+    const now = new Date();
+    const upcoming = queuedAppointments.find((item) => {
+      return new Date(item.startsAt) >= now;
+    });
+
+    return upcoming ?? queuedAppointments[0];
+  }, [sortedAppointments]);
+
   const selectedConsultationIsFinalizedRecord =
     selectedMedicalRecord?.status === 'FINALIZED';
 
@@ -1466,7 +1495,7 @@ export default function Home() {
   }, [activeSection, nextFreeSlot, schedulingDate, schedulingDaySummaries]);
 
   useEffect(() => {
-    if (activeSection !== 'consultations') {
+    if (activeSection !== 'medicalRecords') {
       return;
     }
 
@@ -1482,12 +1511,12 @@ export default function Home() {
     );
 
     if (!selectedExists) {
-      setSelectedConsultationId(sortedAppointments[0].id);
+      setSelectedConsultationId(nextConsultation?.id ?? sortedAppointments[0].id);
     }
-  }, [activeSection, selectedConsultationId, sortedAppointments]);
+  }, [activeSection, nextConsultation?.id, selectedConsultationId, sortedAppointments]);
 
   useEffect(() => {
-    if (activeSection !== 'consultations' || !selectedConsultationId) {
+    if (activeSection !== 'medicalRecords' || !selectedConsultationId) {
       return;
     }
 
@@ -1780,13 +1809,19 @@ export default function Home() {
 
   function onSelectConsultationForMedicalRecord(appointmentId: string) {
     setSelectedConsultationId(appointmentId);
+    setActiveSection('medicalRecords');
+  }
 
-    const panel = document.getElementById('medical-record-workspace');
-    if (panel) {
-      panel.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start',
-      });
+  function onStartAttendance(appointment: Appointment) {
+    setSelectedConsultationId(appointment.id);
+    setActiveSection('medicalRecords');
+
+    if (
+      appointment.status !== 'IN_PROGRESS' &&
+      appointment.status !== 'COMPLETED' &&
+      appointment.status !== 'CANCELED'
+    ) {
+      void onChangeAppointmentStatus(appointment.id, 'IN_PROGRESS');
     }
   }
 
@@ -2562,18 +2597,31 @@ export default function Home() {
                   <p className="mt-2 text-sm text-slate-600">
                     Duracao padrao por consulta: {clinicSettings.consultationDurationMinutes} minutos.
                   </p>
+                  <p className="mt-1 text-xs text-amber-700">
+                    {nextConsultation
+                      ? `Proxima consulta em destaque: ${formatTime(
+                          nextConsultation.startsAt,
+                        )} - ${nextConsultation.patient.name}.`
+                      : 'Nao ha consultas pendentes para destaque neste dia.'}
+                  </p>
                 </div>
 
                 <div className="divide-y divide-slate-200">
                   {consultationsCalendarSlots.map((slot, index) => {
                     const isFocusedConsultation =
                       slot.appointment?.id === selectedConsultationId;
+                    const isNextConsultation =
+                      slot.appointment?.id === nextConsultation?.id;
 
                     return (
                       <div
                         key={`${selectedDate}-${slot.time}`}
                         className={`agenda-row grid grid-cols-[82px_1fr] gap-3 px-4 py-3 ${
-                          isFocusedConsultation ? 'bg-teal-50/45' : ''
+                          isNextConsultation
+                            ? 'bg-amber-50/70'
+                            : isFocusedConsultation
+                            ? 'bg-teal-50/45'
+                            : ''
                         }`}
                         style={{ animationDelay: `${index * 32}ms` }}
                       >
@@ -2584,7 +2632,9 @@ export default function Home() {
                         {slot.appointment ? (
                           <div
                             className={`rounded-md border px-3 py-3 ${
-                              isFocusedConsultation
+                              isNextConsultation
+                                ? 'border-amber-300 bg-amber-50/80'
+                                : isFocusedConsultation
                                 ? 'border-teal-300 bg-teal-50/70'
                                 : 'border-slate-200 bg-slate-50'
                             }`}
@@ -2604,7 +2654,14 @@ export default function Home() {
                                   {slot.appointment.veterinarianName}
                                 </p>
                               </div>
-                              <StatusBadge status={slot.appointment.status} />
+                              <div className="flex items-center gap-2">
+                                {isNextConsultation && (
+                                  <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-800">
+                                    Proxima
+                                  </span>
+                                )}
+                                <StatusBadge status={slot.appointment.status} />
+                              </div>
                             </div>
 
                             <div className="mt-3 flex flex-wrap gap-1.5">
@@ -2632,12 +2689,7 @@ export default function Home() {
                               />
                               <TinyActionButton
                                 title="Atender"
-                                onClick={() =>
-                                  void onChangeAppointmentStatus(
-                                    slot.appointment!.id,
-                                    'IN_PROGRESS',
-                                  )
-                                }
+                                onClick={() => onStartAttendance(slot.appointment!)}
                                 disabled={
                                   slot.appointment.status === 'COMPLETED' ||
                                   slot.appointment.status === 'CANCELED'
@@ -2679,9 +2731,12 @@ export default function Home() {
                 </div>
               </div>
 
+            </section>
+          ) : activeSection === 'medicalRecords' ? (
+            <section className="rise-in mx-auto w-full max-w-6xl">
               <div
                 id="medical-record-workspace"
-                className="mt-6 overflow-hidden border border-slate-200 bg-white"
+                className="overflow-hidden border border-slate-200 bg-white"
               >
                 <div className="grid xl:grid-cols-[300px_1fr]">
                   <aside className="border-b border-slate-200 bg-slate-50/70 px-5 py-5 xl:border-b-0 xl:border-r">
@@ -2703,6 +2758,7 @@ export default function Home() {
                       <ul className="mt-4 space-y-2">
                         {sortedAppointments.map((appointment) => {
                           const active = appointment.id === selectedConsultationId;
+                          const isNext = appointment.id === nextConsultation?.id;
 
                           return (
                             <li key={appointment.id}>
@@ -2714,12 +2770,21 @@ export default function Home() {
                                 className={`w-full border px-3 py-3 text-left transition ${
                                   active
                                     ? 'border-teal-300 bg-teal-50'
+                                    : isNext
+                                    ? 'border-amber-300 bg-amber-50'
                                     : 'border-slate-200 bg-white hover:border-teal-200 hover:bg-teal-50/40'
                                 }`}
                               >
-                                <p className="text-sm font-semibold text-slate-900">
-                                  {formatTime(appointment.startsAt)} - {appointment.patient.name}
-                                </p>
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-sm font-semibold text-slate-900">
+                                    {formatTime(appointment.startsAt)} - {appointment.patient.name}
+                                  </p>
+                                  {isNext && (
+                                    <span className="rounded-full border border-amber-300 bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-800">
+                                      Proxima
+                                    </span>
+                                  )}
+                                </div>
                                 <p className="mt-1 text-xs text-slate-600">
                                   {appointment.reason}
                                 </p>
