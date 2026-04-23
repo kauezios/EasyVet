@@ -125,6 +125,18 @@ type SectionItem = {
   description: string;
 };
 
+type ClinicScheduleSettings = {
+  consultationDurationMinutes: number;
+  openingTime: string;
+  closingTime: string;
+};
+
+type SlotAvailability = {
+  time: string;
+  blocked: boolean;
+  appointment: Appointment | null;
+};
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
 
@@ -238,6 +250,8 @@ const DEMO_CREDENTIALS: Array<{
   },
 ];
 
+const SCHEDULING_DAYS_WINDOW = 10;
+
 function toLocalISODate(date: Date): string {
   const offset = date.getTimezoneOffset();
   const localDate = new Date(date.getTime() - offset * 60000);
@@ -252,6 +266,21 @@ function formatDayLabel(dateIso: string): string {
     day: '2-digit',
     month: 'long',
     year: 'numeric',
+  }).format(date);
+}
+
+function formatShortDateLabel(dateIso: string): string {
+  const date = new Date(`${dateIso}T12:00:00`);
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: 'short',
+  }).format(date);
+}
+
+function formatWeekdayShort(dateIso: string): string {
+  const date = new Date(`${dateIso}T12:00:00`);
+  return new Intl.DateTimeFormat('pt-BR', {
+    weekday: 'short',
   }).format(date);
 }
 
@@ -274,6 +303,95 @@ function formatDateTime(dateIso: string): string {
 
 function joinDateAndTime(date: string, time: string): string {
   return `${date}T${time}:00`;
+}
+
+function timeToMinutes(value: string): number {
+  const [hours, minutes] = value.split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
+function minutesToTime(value: number): string {
+  const hours = Math.floor(value / 60);
+  const minutes = value % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function addMinutesToDate(dateIso: string, time: string, minutesToAdd: number): string {
+  const absoluteMinutes = timeToMinutes(time) + minutesToAdd;
+  const normalized = minutesToTime(absoluteMinutes);
+  return joinDateAndTime(dateIso, normalized);
+}
+
+function buildDateWindow(days: number): string[] {
+  const output: string[] = [];
+  const today = new Date();
+
+  for (let index = 0; index < days; index += 1) {
+    const target = new Date(today);
+    target.setDate(today.getDate() + index);
+    output.push(toLocalISODate(target));
+  }
+
+  return output;
+}
+
+function generateDailySlots(
+  openingTime: string,
+  closingTime: string,
+  durationMinutes: number,
+): string[] {
+  const startMinutes = timeToMinutes(openingTime);
+  const endMinutes = timeToMinutes(closingTime);
+  const slots: string[] = [];
+
+  for (
+    let current = startMinutes;
+    current + durationMinutes <= endMinutes;
+    current += durationMinutes
+  ) {
+    slots.push(minutesToTime(current));
+  }
+
+  return slots;
+}
+
+function shouldBlockSlotByStatus(status: AppointmentStatus): boolean {
+  return status !== 'CANCELED';
+}
+
+function buildSlotsAvailability(
+  dateIso: string,
+  slots: string[],
+  durationMinutes: number,
+  appointments: Appointment[],
+  options?: {
+    ignoreCanceledAppointments?: boolean;
+  },
+): SlotAvailability[] {
+  return slots.map((slot) => {
+    const slotStart = new Date(joinDateAndTime(dateIso, slot));
+    const slotEnd = new Date(slotStart);
+    slotEnd.setMinutes(slotEnd.getMinutes() + durationMinutes);
+
+    const appointment = appointments.find((item) => {
+      if (
+        options?.ignoreCanceledAppointments &&
+        !shouldBlockSlotByStatus(item.status)
+      ) {
+        return false;
+      }
+
+      const appointmentStart = new Date(item.startsAt);
+      const appointmentEnd = new Date(item.endsAt);
+      return slotStart < appointmentEnd && slotEnd > appointmentStart;
+    });
+
+    return {
+      time: slot,
+      blocked: Boolean(appointment),
+      appointment: appointment ?? null,
+    };
+  });
 }
 
 function sortAppointments(data: Appointment[]): Appointment[] {
@@ -519,16 +637,28 @@ export default function Home() {
   const [selectedDate, setSelectedDate] = useState<string>(
     toLocalISODate(new Date()),
   );
+  const [schedulingDate, setSchedulingDate] = useState<string>(
+    toLocalISODate(new Date()),
+  );
+  const [clinicSettings, setClinicSettings] = useState<ClinicScheduleSettings>({
+    consultationDurationMinutes: 30,
+    openingTime: '08:00',
+    closingTime: '18:00',
+  });
 
   const [tutors, setTutors] = useState<Tutor[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [appointmentsByDate, setAppointmentsByDate] = useState<
+    Record<string, Appointment[]>
+  >({});
   const [profiles, setProfiles] = useState<AccessProfile[]>([]);
 
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const [isProfileSaving, setIsProfileSaving] = useState(false);
   const [isAppointmentSaving, setIsAppointmentSaving] = useState(false);
   const [isPatientSaving, setIsPatientSaving] = useState(false);
+  const [isAvailabilityLoading, setIsAvailabilityLoading] = useState(false);
 
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -537,7 +667,6 @@ export default function Home() {
     patientId: '',
     veterinarianName: '',
     startsAt: '09:00',
-    endsAt: '09:30',
     reason: '',
   });
 
@@ -690,6 +819,89 @@ export default function Home() {
     return sortTutors(tutors);
   }, [tutors]);
 
+  const schedulingDatesWindow = useMemo(() => {
+    return buildDateWindow(SCHEDULING_DAYS_WINDOW);
+  }, []);
+
+  const dailySlots = useMemo(() => {
+    return generateDailySlots(
+      clinicSettings.openingTime,
+      clinicSettings.closingTime,
+      clinicSettings.consultationDurationMinutes,
+    );
+  }, [
+    clinicSettings.closingTime,
+    clinicSettings.consultationDurationMinutes,
+    clinicSettings.openingTime,
+  ]);
+
+  const appointmentsForSchedulingDate = useMemo(() => {
+    return appointmentsByDate[schedulingDate] ?? [];
+  }, [appointmentsByDate, schedulingDate]);
+
+  const schedulingSlotsAvailability = useMemo(() => {
+    return buildSlotsAvailability(
+      schedulingDate,
+      dailySlots,
+      clinicSettings.consultationDurationMinutes,
+      appointmentsForSchedulingDate,
+      {
+        ignoreCanceledAppointments: true,
+      },
+    );
+  }, [
+    appointmentsForSchedulingDate,
+    clinicSettings.consultationDurationMinutes,
+    dailySlots,
+    schedulingDate,
+  ]);
+
+  const nextFreeSlot = useMemo(() => {
+    return schedulingSlotsAvailability.find((slot) => !slot.blocked)?.time ?? '';
+  }, [schedulingSlotsAvailability]);
+
+  const schedulingDaySummaries = useMemo(() => {
+    return schedulingDatesWindow.map((dateIso) => {
+      const isLoaded = dateIso in appointmentsByDate;
+      const dateAppointments = appointmentsByDate[dateIso] ?? [];
+      const slots = buildSlotsAvailability(
+        dateIso,
+        dailySlots,
+        clinicSettings.consultationDurationMinutes,
+        dateAppointments,
+        {
+          ignoreCanceledAppointments: true,
+        },
+      );
+      const freeCount = slots.filter((slot) => !slot.blocked).length;
+
+      return {
+        dateIso,
+        isLoaded,
+        freeCount,
+      };
+    });
+  }, [
+    appointmentsByDate,
+    clinicSettings.consultationDurationMinutes,
+    dailySlots,
+    schedulingDatesWindow,
+  ]);
+
+  const consultationsCalendarSlots = useMemo(() => {
+    return buildSlotsAvailability(
+      selectedDate,
+      dailySlots,
+      clinicSettings.consultationDurationMinutes,
+      sortedAppointments,
+    );
+  }, [
+    clinicSettings.consultationDurationMinutes,
+    dailySlots,
+    selectedDate,
+    sortedAppointments,
+  ]);
+
   const selectedTutorByDocument = useMemo(() => {
     const resolvedById = sortedTutors.find(
       (tutor) => tutor.id === patientForm.tutorResolvedId,
@@ -716,6 +928,56 @@ export default function Home() {
 
   const isExistingTutorSelected = Boolean(selectedTutorByDocument);
 
+  const loadAppointmentsForDate = useCallback(
+    async (dateIso: string): Promise<Appointment[]> => {
+      if (isDemoMode) {
+        if (dateIso === selectedDate) {
+          return sortAppointments(appointments);
+        }
+
+        return sortAppointments(appointmentsByDate[dateIso] ?? []);
+      }
+
+      const data = await request<Appointment[]>(`/appointments?date=${dateIso}`);
+      return sortAppointments(data);
+    },
+    [appointments, appointmentsByDate, isDemoMode, request, selectedDate],
+  );
+
+  const ensureAppointmentsByDate = useCallback(
+    async (dates: string[]) => {
+      const missingDates = dates.filter((date) => !(date in appointmentsByDate));
+      if (missingDates.length === 0) {
+        return;
+      }
+
+      setIsAvailabilityLoading(true);
+      try {
+        const loaded = await Promise.all(
+          missingDates.map(async (date) => {
+            const data = await loadAppointmentsForDate(date);
+            return [date, data] as const;
+          }),
+        );
+
+        setAppointmentsByDate((current) => {
+          const next = { ...current };
+          loaded.forEach(([date, data]) => {
+            next[date] = sortAppointments(data);
+          });
+          return next;
+        });
+      } catch (error) {
+        setErrorMessage(
+          normalizeErrorMessage(error, 'Falha ao carregar disponibilidade de agenda.'),
+        );
+      } finally {
+        setIsAvailabilityLoading(false);
+      }
+    },
+    [appointmentsByDate, loadAppointmentsForDate],
+  );
+
   const bootstrapWorkspace = useCallback(async () => {
     if (!authUser) {
       return;
@@ -731,9 +993,15 @@ export default function Home() {
         request<Appointment[]>(`/appointments?date=${selectedDate}`),
       ]);
 
+      const sortedDayAppointments = sortAppointments(appointmentData);
+
       setTutors(tutorData);
       setPatients(patientData);
-      setAppointments(sortAppointments(appointmentData));
+      setAppointments(sortedDayAppointments);
+      setAppointmentsByDate((current) => ({
+        ...current,
+        [selectedDate]: sortedDayAppointments,
+      }));
 
       if (authUser.role === 'ADMIN') {
         const profileData = await request<AccessProfile[]>('/profiles');
@@ -755,6 +1023,10 @@ export default function Home() {
       setTutors(demoDataset.tutors);
       setPatients(demoDataset.patients);
       setAppointments(demoDataset.appointments);
+      setAppointmentsByDate((current) => ({
+        ...current,
+        [selectedDate]: demoDataset.appointments,
+      }));
       setProfiles(demoDataset.profiles);
 
       setAppointmentForm((current) => ({
@@ -794,6 +1066,62 @@ export default function Home() {
       }));
     }
   }, [patientForm.tutorResolvedId, tutors]);
+
+  useEffect(() => {
+    setSchedulingDate(selectedDate);
+  }, [selectedDate]);
+
+  useEffect(() => {
+    if (!authUser || activeSection !== 'scheduling') {
+      return;
+    }
+
+    void ensureAppointmentsByDate(schedulingDatesWindow);
+  }, [
+    activeSection,
+    authUser,
+    ensureAppointmentsByDate,
+    schedulingDatesWindow,
+  ]);
+
+  useEffect(() => {
+    if (activeSection !== 'scheduling') {
+      return;
+    }
+
+    if (!nextFreeSlot) {
+      setAppointmentForm((current) => ({
+        ...current,
+        startsAt: '',
+      }));
+      return;
+    }
+
+    const selectedSlot = schedulingSlotsAvailability.find(
+      (slot) => slot.time === appointmentForm.startsAt,
+    );
+
+    if (!selectedSlot || selectedSlot.blocked) {
+      setAppointmentForm((current) => ({
+        ...current,
+        startsAt: nextFreeSlot,
+      }));
+    }
+  }, [activeSection, appointmentForm.startsAt, nextFreeSlot, schedulingSlotsAvailability]);
+
+  useEffect(() => {
+    if (activeSection !== 'scheduling' || nextFreeSlot) {
+      return;
+    }
+
+    const nextDayWithSlot = schedulingDaySummaries.find(
+      (day) => day.isLoaded && day.freeCount > 0,
+    );
+
+    if (nextDayWithSlot && nextDayWithSlot.dateIso !== schedulingDate) {
+      setSchedulingDate(nextDayWithSlot.dateIso);
+    }
+  }, [activeSection, nextFreeSlot, schedulingDate, schedulingDaySummaries]);
 
   async function onLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -858,11 +1186,13 @@ export default function Home() {
     setTutors([]);
     setPatients([]);
     setAppointments([]);
+    setAppointmentsByDate({});
     setProfiles([]);
     setIsDemoMode(false);
     setErrorMessage('');
     setStatusMessage('Sessao finalizada.');
     setActiveSection('consultations');
+    setSchedulingDate(toLocalISODate(new Date()));
     setPatientForm({
       tutorDocument: '',
       tutorResolvedId: '',
@@ -877,6 +1207,18 @@ export default function Home() {
       birthDate: '',
       currentWeight: '',
     });
+  }
+
+  function onSelectSchedulingDate(dateIso: string) {
+    setSchedulingDate(dateIso);
+    setAppointmentForm((current) => ({
+      ...current,
+      startsAt: '',
+    }));
+
+    if (!(dateIso in appointmentsByDate)) {
+      void ensureAppointmentsByDate([dateIso]);
+    }
   }
 
   async function onCreateAppointment(event: FormEvent<HTMLFormElement>) {
@@ -898,11 +1240,30 @@ export default function Home() {
         throw new Error('Selecione um paciente valido para continuar.');
       }
 
-      const startsAt = joinDateAndTime(selectedDate, appointmentForm.startsAt);
-      const endsAt = joinDateAndTime(selectedDate, appointmentForm.endsAt);
+      if (!appointmentForm.startsAt) {
+        throw new Error('Nao ha horario disponivel para o dia selecionado.');
+      }
+
+      const selectedSlot = schedulingSlotsAvailability.find(
+        (slot) => slot.time === appointmentForm.startsAt,
+      );
+      if (!selectedSlot || selectedSlot.blocked) {
+        throw new Error(
+          'Este horario ja foi ocupado. Selecione o proximo horario disponivel.',
+        );
+      }
+
+      const startsAt = joinDateAndTime(schedulingDate, appointmentForm.startsAt);
+      const endsAt = addMinutesToDate(
+        schedulingDate,
+        appointmentForm.startsAt,
+        clinicSettings.consultationDurationMinutes,
+      );
+
+      let createdAppointment: Appointment;
 
       if (isDemoMode) {
-        const created: Appointment = {
+        createdAppointment = {
           id: `demo-appt-${Date.now()}`,
           patientId: patient.id,
           tutorId: tutor.id,
@@ -924,10 +1285,8 @@ export default function Home() {
             phone: tutor.phone,
           },
         };
-
-        setAppointments((current) => sortAppointments([...current, created]));
       } else {
-        const created = await request<Appointment>('/appointments', {
+        createdAppointment = await request<Appointment>('/appointments', {
           method: 'POST',
           body: JSON.stringify({
             patientId: appointmentForm.patientId,
@@ -937,13 +1296,28 @@ export default function Home() {
             reason: appointmentForm.reason.trim(),
           }),
         });
+      }
 
-        setAppointments((current) => sortAppointments([...current, created]));
+      setAppointmentsByDate((current) => {
+        const nextDateAppointments = sortAppointments([
+          ...(current[schedulingDate] ?? []),
+          createdAppointment,
+        ]);
+
+        return {
+          ...current,
+          [schedulingDate]: nextDateAppointments,
+        };
+      });
+
+      if (schedulingDate === selectedDate) {
+        setAppointments((current) => sortAppointments([...current, createdAppointment]));
       }
 
       setAppointmentForm((current) => ({
         ...current,
         reason: '',
+        startsAt: '',
       }));
 
       setStatusMessage('Consulta agendada com sucesso.');
@@ -965,8 +1339,8 @@ export default function Home() {
 
     try {
       if (isDemoMode) {
-        setAppointments((current) =>
-          current.map((item) => {
+        const updateStatus = (data: Appointment[]) =>
+          data.map((item) => {
             if (item.id !== appointmentId) {
               return item;
             }
@@ -975,8 +1349,16 @@ export default function Home() {
               ...item,
               status,
             };
-          }),
-        );
+          });
+
+        setAppointments((current) => sortAppointments(updateStatus(current)));
+        setAppointmentsByDate((current) => {
+          const dayAppointments = current[selectedDate] ?? [];
+          return {
+            ...current,
+            [selectedDate]: sortAppointments(updateStatus(dayAppointments)),
+          };
+        });
       } else {
         const updated = await request<Appointment>(
           `/appointments/${appointmentId}/status`,
@@ -989,14 +1371,33 @@ export default function Home() {
         );
 
         setAppointments((current) =>
-          current.map((item) => {
-            if (item.id !== appointmentId) {
-              return item;
-            }
+          sortAppointments(
+            current.map((item) => {
+              if (item.id !== appointmentId) {
+                return item;
+              }
 
-            return updated;
-          }),
+              return updated;
+            }),
+          ),
         );
+
+        const updatedDate = toLocalISODate(new Date(updated.startsAt));
+        setAppointmentsByDate((current) => {
+          const dayAppointments = current[updatedDate] ?? [];
+          return {
+            ...current,
+            [updatedDate]: sortAppointments(
+              dayAppointments.map((item) => {
+                if (item.id !== appointmentId) {
+                  return item;
+                }
+
+                return updated;
+              }),
+            ),
+          };
+        });
       }
 
       setStatusMessage('Status atualizado com sucesso.');
@@ -1005,6 +1406,18 @@ export default function Home() {
         normalizeErrorMessage(error, 'Falha ao atualizar status da consulta.'),
       );
     }
+  }
+
+  function onCancelAppointment(appointmentId: string) {
+    const shouldCancel = window.confirm(
+      'Deseja realmente cancelar esta consulta?',
+    );
+
+    if (!shouldCancel) {
+      return;
+    }
+
+    void onChangeAppointmentStatus(appointmentId, 'CANCELED');
   }
 
   function onLookupTutorByDocument() {
@@ -1493,100 +1906,109 @@ export default function Home() {
               </div>
 
               <div className="mt-5 overflow-hidden border border-slate-200 bg-white">
-                <div className="grid grid-cols-[90px_1fr_1fr_1fr_auto] gap-3 border-b border-slate-200 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                  <span>Horario</span>
-                  <span>Paciente</span>
-                  <span>Tutor</span>
-                  <span>Veterinario</span>
-                  <span className="text-right">Acoes</span>
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                    Calendario do dia
+                  </p>
+                  <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                    Agenda por horario
+                  </h3>
+                  <p className="mt-2 text-sm text-slate-600">
+                    Duracao padrao por consulta: {clinicSettings.consultationDurationMinutes} minutos.
+                  </p>
                 </div>
 
-                {sortedAppointments.length === 0 ? (
-                  <p className="px-4 py-10 text-sm text-slate-600">
-                    Nao ha consultas para a data selecionada.
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-slate-200">
-                    {sortedAppointments.map((appointment, index) => (
-                      <li
-                        key={appointment.id}
-                        className="agenda-row"
-                        style={{ animationDelay: `${index * 45}ms` }}
-                      >
-                        <div className="grid grid-cols-[90px_1fr_1fr_1fr_auto] items-center gap-3 px-4 py-3 text-sm">
-                          <div>
-                            <p className="font-medium text-slate-900">
-                              {formatTime(appointment.startsAt)}
-                            </p>
-                            <p className="text-xs text-slate-500">{appointment.reason}</p>
+                <div className="divide-y divide-slate-200">
+                  {consultationsCalendarSlots.map((slot, index) => (
+                    <div
+                      key={`${selectedDate}-${slot.time}`}
+                      className="agenda-row grid grid-cols-[82px_1fr] gap-3 px-4 py-3"
+                      style={{ animationDelay: `${index * 32}ms` }}
+                    >
+                      <div className="pt-1">
+                        <p className="text-sm font-semibold text-slate-900">{slot.time}</p>
+                      </div>
+
+                      {slot.appointment ? (
+                        <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-3">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">
+                                {slot.appointment.patient.name}
+                              </p>
+                              <p className="text-xs text-slate-600">
+                                {formatTime(slot.appointment.startsAt)} -{' '}
+                                {formatTime(slot.appointment.endsAt)} |{' '}
+                                {slot.appointment.reason}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                Tutor: {slot.appointment.tutor.name} | Vet:{' '}
+                                {slot.appointment.veterinarianName}
+                              </p>
+                            </div>
+                            <StatusBadge status={slot.appointment.status} />
                           </div>
 
-                          <div>
-                            <p className="font-medium text-slate-900">
-                              {appointment.patient.name}
-                            </p>
-                            <p className="text-xs text-slate-500">
-                              {appointment.patient.species}
-                              {appointment.patient.breed
-                                ? ` - ${appointment.patient.breed}`
-                                : ''}
-                            </p>
-                          </div>
-
-                          <div>
-                            <p className="font-medium text-slate-800">
-                              {appointment.tutor.name}
-                            </p>
-                            <p className="text-xs text-slate-500">
-                              {appointment.tutor.phone || 'Sem telefone'}
-                            </p>
-                          </div>
-
-                          <div className="flex items-center gap-2">
-                            <StatusBadge status={appointment.status} />
-                            <span className="text-slate-700">
-                              {appointment.veterinarianName}
-                            </span>
-                          </div>
-
-                          <div className="flex justify-end gap-1.5">
+                          <div className="mt-3 flex flex-wrap gap-1.5">
                             <TinyActionButton
                               title="Confirmar"
                               onClick={() =>
                                 void onChangeAppointmentStatus(
-                                  appointment.id,
+                                  slot.appointment!.id,
                                   'CONFIRMED',
                                 )
                               }
-                              disabled={appointment.status === 'COMPLETED'}
+                              disabled={
+                                slot.appointment.status === 'COMPLETED' ||
+                                slot.appointment.status === 'CANCELED'
+                              }
                             />
                             <TinyActionButton
                               title="Atender"
                               onClick={() =>
                                 void onChangeAppointmentStatus(
-                                  appointment.id,
+                                  slot.appointment!.id,
                                   'IN_PROGRESS',
                                 )
                               }
-                              disabled={appointment.status === 'COMPLETED'}
+                              disabled={
+                                slot.appointment.status === 'COMPLETED' ||
+                                slot.appointment.status === 'CANCELED'
+                              }
                             />
                             <TinyActionButton
                               title="Concluir"
                               onClick={() =>
                                 void onChangeAppointmentStatus(
-                                  appointment.id,
+                                  slot.appointment!.id,
                                   'COMPLETED',
                                 )
                               }
                               highlight
-                              disabled={appointment.status === 'COMPLETED'}
+                              disabled={
+                                slot.appointment.status === 'COMPLETED' ||
+                                slot.appointment.status === 'CANCELED'
+                              }
+                            />
+                            <TinyActionButton
+                              title="Cancelar"
+                              onClick={() => onCancelAppointment(slot.appointment!.id)}
+                              danger
+                              disabled={
+                                slot.appointment.status === 'COMPLETED' ||
+                                slot.appointment.status === 'CANCELED'
+                              }
                             />
                           </div>
                         </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                      ) : (
+                        <div className="rounded-md border border-dashed border-slate-300 bg-white px-3 py-3 text-sm text-slate-500">
+                          Horario livre
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             </section>
           ) : activeSection === 'scheduling' ? (
@@ -1596,7 +2018,7 @@ export default function Home() {
                   Novo agendamento
                 </p>
                 <h3 className="mt-2 text-xl font-semibold text-slate-900">
-                  Preencha os dados da consulta
+                  Defina paciente, dia e horario
                 </h3>
 
                 <div className="mt-5 grid gap-4">
@@ -1638,40 +2060,6 @@ export default function Home() {
                     />
                   </label>
 
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="grid gap-1.5 text-sm text-slate-700">
-                      Inicio
-                      <input
-                        required
-                        type="time"
-                        value={appointmentForm.startsAt}
-                        onChange={(event) =>
-                          setAppointmentForm((current) => ({
-                            ...current,
-                            startsAt: event.target.value,
-                          }))
-                        }
-                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
-                      />
-                    </label>
-
-                    <label className="grid gap-1.5 text-sm text-slate-700">
-                      Fim
-                      <input
-                        required
-                        type="time"
-                        value={appointmentForm.endsAt}
-                        onChange={(event) =>
-                          setAppointmentForm((current) => ({
-                            ...current,
-                            endsAt: event.target.value,
-                          }))
-                        }
-                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
-                      />
-                    </label>
-                  </div>
-
                   <label className="grid gap-1.5 text-sm text-slate-700">
                     Motivo da consulta
                     <input
@@ -1688,9 +2076,95 @@ export default function Home() {
                     />
                   </label>
 
+                  <div className="border-t border-slate-200 pt-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                      Dias disponiveis
+                    </p>
+                    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+                      {schedulingDaySummaries.map((day) => {
+                        const active = day.dateIso === schedulingDate;
+
+                        return (
+                          <button
+                            key={day.dateIso}
+                            type="button"
+                            onClick={() => onSelectSchedulingDate(day.dateIso)}
+                            className={`rounded-md border px-2.5 py-2 text-left text-xs transition ${
+                              active
+                                ? 'border-slate-900 bg-slate-900 text-white'
+                                : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            <p className="uppercase tracking-[0.12em]">
+                              {formatWeekdayShort(day.dateIso)}
+                            </p>
+                            <p className="mt-1 text-sm font-semibold">
+                              {formatShortDateLabel(day.dateIso)}
+                            </p>
+                            <p className={`mt-1 text-[11px] ${active ? 'text-white/80' : 'text-slate-500'}`}>
+                              {day.isLoaded
+                                ? `${day.freeCount} livre(s)`
+                                : 'Carregando'}
+                            </p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-200 pt-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                      Horarios disponiveis
+                    </p>
+                    <p className="mt-1 text-sm text-slate-600">{formatDayLabel(schedulingDate)}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Proximo horario livre: {nextFreeSlot || 'Sem disponibilidade'}
+                    </p>
+
+                    <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
+                      {schedulingSlotsAvailability.map((slot) => (
+                        <button
+                          key={`${schedulingDate}-${slot.time}`}
+                          type="button"
+                          disabled={slot.blocked}
+                          onClick={() =>
+                            setAppointmentForm((current) => ({
+                              ...current,
+                              startsAt: slot.time,
+                            }))
+                          }
+                          className={`rounded-md border px-2 py-2 text-xs font-medium transition ${
+                            appointmentForm.startsAt === slot.time
+                              ? 'border-teal-700 bg-teal-700 text-white'
+                              : slot.blocked
+                                ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                                : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+                          }`}
+                        >
+                          {slot.time}
+                        </button>
+                      ))}
+                    </div>
+
+                    {isAvailabilityLoading && (
+                      <p className="mt-2 text-xs text-slate-500">
+                        Atualizando disponibilidade...
+                      </p>
+                    )}
+                  </div>
+
+                  <p className="text-xs text-slate-500">
+                    O horario final e calculado automaticamente pelo padrao da clinica (
+                    {clinicSettings.consultationDurationMinutes} min).
+                  </p>
+
                   <button
                     type="submit"
-                    disabled={isAppointmentSaving || patients.length === 0}
+                    disabled={
+                      isAppointmentSaving ||
+                      patients.length === 0 ||
+                      !appointmentForm.startsAt
+                    }
                     className="mt-1 rounded-md bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-65"
                   >
                     {isAppointmentSaving ? 'Salvando...' : 'Agendar consulta'}
@@ -1701,37 +2175,38 @@ export default function Home() {
               <div className="border border-slate-200 bg-white">
                 <div className="border-b border-slate-200 px-5 py-4">
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                    Planejamento do dia
+                    Disponibilidade do dia
                   </p>
                   <h3 className="mt-2 text-xl font-semibold text-slate-900">
-                    Timeline de atendimentos
+                    {formatDayLabel(schedulingDate)}
                   </h3>
                 </div>
-
-                {sortedAppointments.length === 0 ? (
-                  <p className="px-5 py-10 text-sm text-slate-600">
-                    Sem consultas registradas para este dia.
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-slate-200">
-                    {sortedAppointments.map((appointment) => (
-                      <li key={appointment.id} className="px-5 py-3 text-sm">
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <div>
-                            <p className="font-medium text-slate-900">
-                              {formatTime(appointment.startsAt)} - {formatTime(appointment.endsAt)}
+                <ul className="divide-y divide-slate-200">
+                  {schedulingSlotsAvailability.map((slot) => (
+                    <li key={`overview-${schedulingDate}-${slot.time}`} className="px-5 py-3 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="font-medium text-slate-900">{slot.time}</p>
+                          {slot.appointment ? (
+                            <p className="text-slate-600">
+                              {slot.appointment.patient.name} | {slot.appointment.reason}
                             </p>
-                            <p className="text-slate-700">
-                              {appointment.patient.name} | {appointment.reason}
-                            </p>
-                          </div>
-
-                          <StatusBadge status={appointment.status} />
+                          ) : (
+                            <p className="text-slate-500">Horario livre</p>
+                          )}
                         </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+
+                        {slot.appointment ? (
+                          <StatusBadge status={slot.appointment.status} />
+                        ) : (
+                          <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+                            Livre
+                          </span>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               </div>
             </section>
           ) : activeSection === 'users' ? (
@@ -2193,18 +2668,112 @@ export default function Home() {
               </div>
             </section>
           ) : (
-            <section className="rise-in mx-auto w-full max-w-6xl border border-slate-200 bg-white px-6 py-8">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                Configuracoes
-              </p>
-              <h3 className="mt-2 text-xl font-semibold text-slate-900">
-                Proximas entregas desta area
-              </h3>
-              <ul className="mt-5 space-y-3 text-sm text-slate-700">
-                <li>Padroes de notificacao para equipe clinica.</li>
-                <li>Preferencias de impressao de receituarios e anexos.</li>
-                <li>Regras de horarios e duracao padrao para atendimento.</li>
-              </ul>
+            <section className="rise-in mx-auto grid w-full max-w-6xl gap-6 xl:grid-cols-[420px_1fr]">
+              <div className="border border-slate-200 bg-white px-6 py-6">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  Configuracoes da clinica
+                </p>
+                <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                  Parametros de agenda
+                </h3>
+                <div className="mt-5 grid gap-4">
+                  <label className="grid gap-1.5 text-sm text-slate-700">
+                    Duracao padrao da consulta (min)
+                    <input
+                      type="number"
+                      min={10}
+                      max={180}
+                      step={5}
+                      value={clinicSettings.consultationDurationMinutes}
+                      onChange={(event) => {
+                        const parsed = Number(event.target.value);
+                        if (!Number.isFinite(parsed)) {
+                          return;
+                        }
+
+                        setClinicSettings((current) => ({
+                          ...current,
+                          consultationDurationMinutes: Math.min(
+                            180,
+                            Math.max(10, parsed),
+                          ),
+                        }));
+                        setAppointmentForm((current) => ({
+                          ...current,
+                          startsAt: '',
+                        }));
+                      }}
+                      className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                    />
+                  </label>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="grid gap-1.5 text-sm text-slate-700">
+                      Inicio de expediente
+                      <input
+                        type="time"
+                        value={clinicSettings.openingTime}
+                        onChange={(event) => {
+                          setClinicSettings((current) => ({
+                            ...current,
+                            openingTime: event.target.value,
+                          }));
+                          setAppointmentForm((current) => ({
+                            ...current,
+                            startsAt: '',
+                          }));
+                        }}
+                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                      />
+                    </label>
+
+                    <label className="grid gap-1.5 text-sm text-slate-700">
+                      Fim de expediente
+                      <input
+                        type="time"
+                        value={clinicSettings.closingTime}
+                        onChange={(event) => {
+                          setClinicSettings((current) => ({
+                            ...current,
+                            closingTime: event.target.value,
+                          }));
+                          setAppointmentForm((current) => ({
+                            ...current,
+                            startsAt: '',
+                          }));
+                        }}
+                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border border-slate-200 bg-white px-6 py-6">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  Impacto imediato
+                </p>
+                <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                  Regras ativas de agendamento
+                </h3>
+                <ul className="mt-5 space-y-3 text-sm text-slate-700">
+                  <li>
+                    Duracao de consulta aplicada automaticamente: {' '}
+                    <span className="font-semibold">
+                      {clinicSettings.consultationDurationMinutes} min
+                    </span>
+                  </li>
+                  <li>
+                    Janelas de horario: {' '}
+                    <span className="font-semibold">
+                      {clinicSettings.openingTime} ate {clinicSettings.closingTime}
+                    </span>
+                  </li>
+                  <li>
+                    Horarios ocupados aparecem bloqueados para novas marcacoes.
+                  </li>
+                </ul>
+              </div>
             </section>
           )}
         </div>
@@ -2253,11 +2822,13 @@ function TinyActionButton({
   title,
   onClick,
   highlight = false,
+  danger = false,
   disabled = false,
 }: {
   title: string;
   onClick: () => void;
   highlight?: boolean;
+  danger?: boolean;
   disabled?: boolean;
 }) {
   return (
@@ -2266,7 +2837,9 @@ function TinyActionButton({
       onClick={onClick}
       disabled={disabled}
       className={`rounded-md border px-2 py-1 text-xs transition ${
-        highlight
+        danger
+          ? 'border-rose-300 text-rose-700 hover:bg-rose-50'
+          : highlight
           ? 'border-teal-600 text-teal-700 hover:bg-teal-50'
           : 'border-slate-300 text-slate-700 hover:bg-slate-100'
       } disabled:cursor-not-allowed disabled:opacity-50`}
