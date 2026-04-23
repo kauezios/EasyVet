@@ -1,7 +1,7 @@
 ﻿# Backlog Planejado - Sprint 1
 
 Periodo sugerido: 2026-05-07 a 2026-05-20
-Status: Em andamento
+Status: Concluida
 Owner: Agente Orquestrador
 
 ## Objetivo da sprint
@@ -21,7 +21,7 @@ Implementar o nucleo operacional do MVP: cadastro, agenda e prontuario com contr
 | EV-S1-007 | Tela de prontuario | Frontend | Alta | 8 pts | Concluido | Formulario com salvar rascunho e finalizar |
 | EV-S1-008 | RBAC e autenticacao base | Backend | Alta | 5 pts | Concluido | Recepcao nao finaliza prontuario; admin gerencia perfis |
 | EV-S1-009 | Testes E2E fluxo principal | QA | Alta | 5 pts | Concluido | Fluxo cadastro->agenda->prontuario validado |
-| EV-S1-010 | Pipeline CI minima | DevOps | Media | 3 pts | Pendente | lint/test/build por PR e status no merge |
+| EV-S1-010 | Pipeline CI minima | DevOps | Media | 3 pts | Concluido | lint/test/build por PR e status no merge |
 | EV-S1-011 | Tela de cadastro operacional (tutor/paciente) | Frontend | Alta | 5 pts | Concluido | Cadastro via UI integrado com API v1 |
 
 ## Dependencias
