@@ -6,11 +6,8 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY } from './roles.decorator';
+import { RequestWithAuthUser } from './request-auth-user.type';
 import { USER_ROLE_HEADER, UserRole } from './user-role.enum';
-
-type RequestWithHeaders = {
-  header: (name: string) => string | undefined;
-};
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -26,8 +23,10 @@ export class RolesGuard implements CanActivate {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest<RequestWithHeaders>();
-    const actorRole = this.parseRole(request.header(USER_ROLE_HEADER));
+    const request = context.switchToHttp().getRequest<RequestWithAuthUser>();
+    const actorRole =
+      request.authUser?.role ??
+      this.parseRole(request.header(USER_ROLE_HEADER));
 
     if (roles.includes(actorRole)) {
       return true;

@@ -1,9 +1,11 @@
 import {
+  AccessRole,
   AppointmentStatus,
   MedicalRecordStatus,
   PatientSex,
   PrismaClient,
 } from '@prisma/client';
+import { createPasswordHash } from '../src/common/auth/password.util';
 
 const prisma = new PrismaClient();
 
@@ -13,6 +15,58 @@ function buildUtcDate(baseDate: string, time: string): Date {
 
 async function main() {
   const dateKey = new Date().toISOString().slice(0, 10);
+  const passwordHash = createPasswordHash('easyvet123');
+
+  await prisma.user.upsert({
+    where: { email: 'admin@easyvet.local' },
+    update: {
+      name: 'Administrador EasyVet',
+      passwordHash,
+      role: AccessRole.ADMIN,
+      active: true,
+    },
+    create: {
+      name: 'Administrador EasyVet',
+      email: 'admin@easyvet.local',
+      passwordHash,
+      role: AccessRole.ADMIN,
+      active: true,
+    },
+  });
+
+  await prisma.user.upsert({
+    where: { email: 'vet@easyvet.local' },
+    update: {
+      name: 'Veterinario EasyVet',
+      passwordHash,
+      role: AccessRole.VETERINARIAN,
+      active: true,
+    },
+    create: {
+      name: 'Veterinario EasyVet',
+      email: 'vet@easyvet.local',
+      passwordHash,
+      role: AccessRole.VETERINARIAN,
+      active: true,
+    },
+  });
+
+  await prisma.user.upsert({
+    where: { email: 'recepcao@easyvet.local' },
+    update: {
+      name: 'Recepcao EasyVet',
+      passwordHash,
+      role: AccessRole.RECEPTION,
+      active: true,
+    },
+    create: {
+      name: 'Recepcao EasyVet',
+      email: 'recepcao@easyvet.local',
+      passwordHash,
+      role: AccessRole.RECEPTION,
+      active: true,
+    },
+  });
 
   const tutorOne = await prisma.tutor.upsert({
     where: { id: 'seed-tutor-1' },
@@ -190,4 +244,3 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
-

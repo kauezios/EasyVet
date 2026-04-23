@@ -27,6 +27,26 @@ enum MedicalRecordStatus {
   FINALIZED
 }
 
+enum AccessRole {
+  ADMIN
+  VETERINARIAN
+  RECEPTION
+}
+
+model User {
+  id           String     @id @default(cuid())
+  name         String
+  email        String     @unique
+  passwordHash String
+  role         AccessRole @default(VETERINARIAN)
+  active       Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([role])
+  @@index([active])
+}
+
 model Tutor {
   id        String    @id @default(cuid())
   name      String

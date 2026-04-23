@@ -86,6 +86,20 @@ type MedicalRecord = {
 type SideMode = 'schedule' | 'record';
 type ActorRole = 'ADMIN' | 'VETERINARIAN' | 'RECEPTION';
 
+type AuthUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: ActorRole;
+  active: boolean;
+};
+
+type LoginResponse = {
+  accessToken: string;
+  expiresInSeconds: number;
+  user: AuthUser;
+};
+
 type MedicalRecordForm = {
   chiefComplaint: string;
   symptomsOnset: string;
@@ -226,6 +240,9 @@ export default function Home() {
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [sideMode, setSideMode] = useState<SideMode>('schedule');
   const [activeRole, setActiveRole] = useState<ActorRole>('VETERINARIAN');
+  const [authToken, setAuthToken] = useState('');
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<
     string | null
   >(null);
@@ -248,6 +265,10 @@ export default function Home() {
 
   const [recordForm, setRecordForm] =
     useState<MedicalRecordForm>(emptyMedicalRecordForm());
+  const [authForm, setAuthForm] = useState({
+    email: 'vet@easyvet.local',
+    password: 'easyvet123',
+  });
 
   const selectedAppointment = useMemo(
     () => appointments.find((item) => item.id === selectedAppointmentId) ?? null,
@@ -295,6 +316,11 @@ export default function Home() {
           headers: {
             'Content-Type': 'application/json',
             'x-user-role': activeRole,
+            ...(authToken
+              ? {
+                  Authorization: `Bearer ${authToken}`,
+                }
+              : {}),
             ...(options?.headers ?? {}),
           },
           cache: 'no-store',
@@ -322,7 +348,7 @@ export default function Home() {
         clearTimeout(timeout);
       }
     },
-    [activeRole],
+    [activeRole, authToken],
   );
 
   const loadCoreData = useCallback(async () => {
@@ -491,6 +517,14 @@ export default function Home() {
       setRecordForm(emptyMedicalRecordForm());
     }
   }, [appointments, selectedAppointmentId]);
+
+  useEffect(() => {
+    if (!authUser) {
+      return;
+    }
+
+    setActiveRole(authUser.role);
+  }, [authUser]);
 
   const openMedicalRecord = useCallback(
     async (appointment: Appointment) => {
@@ -748,6 +782,83 @@ export default function Home() {
     }
   }
 
+  async function onLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setStatusMessage('');
+    setErrorMessage('');
+    setIsAuthenticating(true);
+
+    try {
+      if (isDemoMode) {
+        const email = authForm.email.trim().toLowerCase();
+        const password = authForm.password.trim();
+
+        if (password !== 'easyvet123') {
+          throw new Error('AUTH_INVALID_CREDENTIALS: Senha invalida no modo demo.');
+        }
+
+        const demoUsers: Record<string, AuthUser> = {
+          'admin@easyvet.local': {
+            id: 'demo-user-admin',
+            name: 'Administrador EasyVet',
+            email: 'admin@easyvet.local',
+            role: 'ADMIN',
+            active: true,
+          },
+          'vet@easyvet.local': {
+            id: 'demo-user-vet',
+            name: 'Veterinario EasyVet',
+            email: 'vet@easyvet.local',
+            role: 'VETERINARIAN',
+            active: true,
+          },
+          'recepcao@easyvet.local': {
+            id: 'demo-user-reception',
+            name: 'Recepcao EasyVet',
+            email: 'recepcao@easyvet.local',
+            role: 'RECEPTION',
+            active: true,
+          },
+        };
+
+        const user = demoUsers[email];
+        if (!user) {
+          throw new Error('AUTH_INVALID_CREDENTIALS: Usuario nao encontrado no modo demo.');
+        }
+
+        setAuthToken('demo-session-token');
+        setAuthUser(user);
+        setActiveRole(user.role);
+        setStatusMessage(`Sessao iniciada como ${user.name} (demonstracao).`);
+        return;
+      }
+
+      const session = await request<LoginResponse>('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: authForm.email,
+          password: authForm.password,
+        }),
+      });
+
+      setAuthToken(session.accessToken);
+      setAuthUser(session.user);
+      setActiveRole(session.user.role);
+      setStatusMessage(`Sessao iniciada como ${session.user.name}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Falha ao autenticar.';
+      setErrorMessage(message);
+    } finally {
+      setIsAuthenticating(false);
+    }
+  }
+
+  function onLogout() {
+    setAuthToken('');
+    setAuthUser(null);
+    setStatusMessage('Sessao encerrada.');
+  }
+
   async function onFinalizeRecord() {
     if (!canFinalizeRecord) {
       setErrorMessage('Perfil de recepcao nao pode finalizar prontuario.');
@@ -884,27 +995,94 @@ export default function Home() {
                   Modo demonstracao
                 </p>
               )}
-              <div className="mt-3 flex items-center gap-2">
-                <label
-                  htmlFor="active-role"
-                  className="text-xs uppercase tracking-[0.18em] text-slate-500"
-                >
-                  Perfil ativo
-                </label>
-                <select
-                  id="active-role"
-                  value={activeRole}
-                  onChange={(event) =>
-                    setActiveRole(event.target.value as ActorRole)
-                  }
-                  className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-2 ring-transparent transition focus:ring-teal-400"
-                >
-                  {ROLE_OPTIONS.map((role) => (
-                    <option key={role.value} value={role.value}>
-                      {role.label}
-                    </option>
-                  ))}
-                </select>
+              <div className="mt-3 grid max-w-2xl gap-3 border border-slate-200 bg-slate-50/70 p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <label
+                    htmlFor="active-role"
+                    className="text-xs uppercase tracking-[0.18em] text-slate-500"
+                  >
+                    Perfil ativo
+                  </label>
+                  <select
+                    id="active-role"
+                    value={activeRole}
+                    onChange={(event) =>
+                      setActiveRole(event.target.value as ActorRole)
+                    }
+                    disabled={Boolean(authUser)}
+                    className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-2 ring-transparent transition focus:ring-teal-400 disabled:cursor-not-allowed disabled:bg-slate-100"
+                  >
+                    {ROLE_OPTIONS.map((role) => (
+                      <option key={role.value} value={role.value}>
+                        {role.label}
+                      </option>
+                    ))}
+                  </select>
+                  {authUser && (
+                    <span className="text-xs text-slate-500">
+                      Sincronizado com sessao autenticada.
+                    </span>
+                  )}
+                </div>
+
+                {authUser ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-sm text-slate-700">
+                      Conectado como <span className="font-medium">{authUser.name}</span>{' '}
+                      ({authUser.role})
+                    </p>
+                    <button
+                      type="button"
+                      onClick={onLogout}
+                      className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                    >
+                      Encerrar sessao
+                    </button>
+                  </div>
+                ) : (
+                  <form onSubmit={onLogin} className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
+                    <input
+                      type="email"
+                      required
+                      value={authForm.email}
+                      onChange={(event) =>
+                        setAuthForm((current) => ({
+                          ...current,
+                          email: event.target.value,
+                        }))
+                      }
+                      placeholder="E-mail de acesso"
+                      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
+                    />
+                    <input
+                      type="password"
+                      required
+                      value={authForm.password}
+                      onChange={(event) =>
+                        setAuthForm((current) => ({
+                          ...current,
+                          password: event.target.value,
+                        }))
+                      }
+                      placeholder="Senha"
+                      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isAuthenticating}
+                      className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isAuthenticating ? 'Entrando...' : 'Entrar'}
+                    </button>
+                  </form>
+                )}
+
+                {isDemoMode && (
+                  <p className="text-xs text-slate-500">
+                    Demo: use `admin@easyvet.local`, `vet@easyvet.local` ou
+                    `recepcao@easyvet.local` com senha `easyvet123`.
+                  </p>
+                )}
               </div>
               <p className="mt-3 max-w-2xl text-sm text-slate-600 md:text-base">
                 Workspace operacional para agendar consultas e registrar prontuarios

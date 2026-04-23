@@ -1,7 +1,6 @@
 import {
   IsEmail,
   IsEnum,
-  IsOptional,
   IsString,
   MaxLength,
   MinLength,
@@ -14,10 +13,14 @@ export class CreateProfileDto {
   @MaxLength(120)
   name!: string;
 
-  @IsOptional()
   @IsEmail()
-  email?: string;
+  email!: string;
 
   @IsEnum(UserRole)
   role!: UserRole;
+
+  @IsString()
+  @MinLength(6)
+  @MaxLength(120)
+  password!: string;
 }
