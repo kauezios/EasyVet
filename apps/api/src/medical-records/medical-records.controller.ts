@@ -1,7 +1,18 @@
-﻿import { Body, Controller, Get, Param, Post, Put } from '@nestjs/common';
-import { MedicalRecordsService } from './medical-records.service';
-import { SaveMedicalRecordDraftDto } from './dto/save-medical-record-draft.dto';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Put,
+  UseGuards,
+} from '@nestjs/common';
+import { Roles } from '../common/auth/roles.decorator';
+import { RolesGuard } from '../common/auth/roles.guard';
+import { UserRole } from '../common/auth/user-role.enum';
 import { FinalizeMedicalRecordDto } from './dto/finalize-medical-record.dto';
+import { SaveMedicalRecordDraftDto } from './dto/save-medical-record-draft.dto';
+import { MedicalRecordsService } from './medical-records.service';
 
 @Controller('appointments')
 export class MedicalRecordsController {
@@ -26,6 +37,8 @@ export class MedicalRecordsController {
   }
 
   @Put(':appointmentId/medical-record/finalize')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.VETERINARIAN)
   finalize(
     @Param('appointmentId') appointmentId: string,
     @Body() dto: FinalizeMedicalRecordDto,

@@ -84,6 +84,7 @@ type MedicalRecord = {
 };
 
 type SideMode = 'schedule' | 'record';
+type ActorRole = 'ADMIN' | 'VETERINARIAN' | 'RECEPTION';
 
 type MedicalRecordForm = {
   chiefComplaint: string;
@@ -137,6 +138,12 @@ const STATUS_VISUAL: Record<AppointmentStatus, StatusVisual> = {
     text: 'text-fuchsia-700',
   },
 };
+
+const ROLE_OPTIONS: Array<{ value: ActorRole; label: string }> = [
+  { value: 'ADMIN', label: 'Admin' },
+  { value: 'VETERINARIAN', label: 'Veterinario' },
+  { value: 'RECEPTION', label: 'Recepcao' },
+];
 
 function emptyMedicalRecordForm(): MedicalRecordForm {
   return {
@@ -218,6 +225,7 @@ export default function Home() {
 
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [sideMode, setSideMode] = useState<SideMode>('schedule');
+  const [activeRole, setActiveRole] = useState<ActorRole>('VETERINARIAN');
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<
     string | null
   >(null);
@@ -258,6 +266,7 @@ export default function Home() {
     () => appointments.filter((item) => item.status !== 'CANCELED'),
     [appointments],
   );
+  const canFinalizeRecord = activeRole !== 'RECEPTION';
 
   const metrics = useMemo(() => {
     const total = appointments.length;
@@ -285,6 +294,7 @@ export default function Home() {
           signal: controller.signal,
           headers: {
             'Content-Type': 'application/json',
+            'x-user-role': activeRole,
             ...(options?.headers ?? {}),
           },
           cache: 'no-store',
@@ -312,7 +322,7 @@ export default function Home() {
         clearTimeout(timeout);
       }
     },
-    [],
+    [activeRole],
   );
 
   const loadCoreData = useCallback(async () => {
@@ -739,7 +749,13 @@ export default function Home() {
   }
 
   async function onFinalizeRecord() {
+    if (!canFinalizeRecord) {
+      setErrorMessage('Perfil de recepcao nao pode finalizar prontuario.');
+      return;
+    }
+
     if (!selectedAppointmentId) {
+      setErrorMessage('Selecione uma consulta para finalizar o prontuario.');
       return;
     }
 
@@ -868,6 +884,28 @@ export default function Home() {
                   Modo demonstracao
                 </p>
               )}
+              <div className="mt-3 flex items-center gap-2">
+                <label
+                  htmlFor="active-role"
+                  className="text-xs uppercase tracking-[0.18em] text-slate-500"
+                >
+                  Perfil ativo
+                </label>
+                <select
+                  id="active-role"
+                  value={activeRole}
+                  onChange={(event) =>
+                    setActiveRole(event.target.value as ActorRole)
+                  }
+                  className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-2 ring-transparent transition focus:ring-teal-400"
+                >
+                  {ROLE_OPTIONS.map((role) => (
+                    <option key={role.value} value={role.value}>
+                      {role.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <p className="mt-3 max-w-2xl text-sm text-slate-600 md:text-base">
                 Workspace operacional para agendar consultas e registrar prontuarios
                 com finalizacao assistida por campos obrigatorios.
@@ -974,11 +1012,11 @@ export default function Home() {
                         </div>
                         <p className="mt-1 text-sm text-slate-700">
                           {item.patient.species}
-                          {item.patient.breed ? ` • ${item.patient.breed}` : ''} • Tutor:{' '}
+                          {item.patient.breed ? ` - ${item.patient.breed}` : ''} - Tutor:{' '}
                           {item.tutor.name}
                         </p>
                         <p className="mt-1 text-sm text-slate-500">
-                          Vet: {item.veterinarianName} • Motivo: {item.reason}
+                          Vet: {item.veterinarianName} - Motivo: {item.reason}
                         </p>
                       </div>
 
@@ -1176,7 +1214,7 @@ export default function Home() {
                       {selectedAppointment.patient.name}
                     </p>
                     <p>
-                      Vet: {selectedAppointment.veterinarianName} •{' '}
+                      Vet: {selectedAppointment.veterinarianName} -{' '}
                       {formatTime(selectedAppointment.startsAt)}
                     </p>
                     {selectedRecord?.status === 'FINALIZED' &&
@@ -1288,12 +1326,20 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={() => void onFinalizeRecord()}
-                    disabled={!selectedAppointment || isRecordSaving}
+                    disabled={
+                      !selectedAppointment || isRecordSaving || !canFinalizeRecord
+                    }
                     className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Finalizar prontuario
                   </button>
                 </div>
+                {!canFinalizeRecord && (
+                  <p className="text-xs text-amber-700">
+                    Perfil de recepcao possui acesso somente de leitura no fluxo
+                    de finalizacao.
+                  </p>
+                )}
               </div>
             </>
           )}
