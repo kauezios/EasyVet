@@ -138,6 +138,7 @@ export default function Home() {
   const [tutors, setTutors] = useState<Tutor[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
   const [selectedDate, setSelectedDate] = useState<string>(toLocalISODate(new Date()));
   const [statusMessage, setStatusMessage] = useState('');
@@ -208,6 +209,97 @@ export default function Home() {
     [request],
   );
 
+  const loadDemoData = useCallback((date: string) => {
+    const demoTutors: Tutor[] = [
+      {
+        id: 'demo-tutor-1',
+        name: 'Marina Araujo',
+        document: '123.456.789-10',
+        phone: '(11) 99999-1001',
+      },
+      {
+        id: 'demo-tutor-2',
+        name: 'Carlos Mendes',
+        document: '987.654.321-00',
+        phone: '(11) 98888-2202',
+      },
+    ];
+
+    const demoPatients: Patient[] = [
+      {
+        id: 'demo-patient-1',
+        tutorId: 'demo-tutor-1',
+        name: 'Thor',
+        species: 'Canino',
+        breed: 'Labrador',
+      },
+      {
+        id: 'demo-patient-2',
+        tutorId: 'demo-tutor-2',
+        name: 'Mia',
+        species: 'Felino',
+        breed: 'Siamês',
+      },
+    ];
+
+    const demoAppointments: Appointment[] = [
+      {
+        id: 'demo-appt-1',
+        patientId: 'demo-patient-1',
+        tutorId: 'demo-tutor-1',
+        veterinarianName: 'Dra. Camila Souza',
+        startsAt: `${date}T09:00:00`,
+        endsAt: `${date}T09:30:00`,
+        reason: 'Consulta de rotina',
+        status: 'CONFIRMED',
+        notes: null,
+        patient: {
+          id: 'demo-patient-1',
+          name: 'Thor',
+          species: 'Canino',
+          breed: 'Labrador',
+        },
+        tutor: {
+          id: 'demo-tutor-1',
+          name: 'Marina Araujo',
+          phone: '(11) 99999-1001',
+        },
+      },
+      {
+        id: 'demo-appt-2',
+        patientId: 'demo-patient-2',
+        tutorId: 'demo-tutor-2',
+        veterinarianName: 'Dr. Rafael Lima',
+        startsAt: `${date}T10:00:00`,
+        endsAt: `${date}T10:30:00`,
+        reason: 'Retorno dermatologico',
+        status: 'SCHEDULED',
+        notes: null,
+        patient: {
+          id: 'demo-patient-2',
+          name: 'Mia',
+          species: 'Felino',
+          breed: 'Siamês',
+        },
+        tutor: {
+          id: 'demo-tutor-2',
+          name: 'Carlos Mendes',
+          phone: '(11) 98888-2202',
+        },
+      },
+    ];
+
+    setTutors(demoTutors);
+    setPatients(demoPatients);
+    setAppointments(demoAppointments);
+    setAppointmentForm((current) => ({
+      ...current,
+      patientId: demoPatients[0]?.id ?? '',
+      veterinarianName: current.veterinarianName || 'Dra. Camila Souza',
+    }));
+    setIsDemoMode(true);
+  }, []);
+
   useEffect(() => {
     const run = async () => {
       setIsLoading(true);
@@ -216,16 +308,20 @@ export default function Home() {
       try {
         await loadCoreData();
         await loadAppointments(selectedDate);
+        setIsDemoMode(false);
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Falha ao carregar agenda.';
-        setErrorMessage(message);
+        loadDemoData(selectedDate);
+        setStatusMessage(
+          'Modo demonstracao ativo: API indisponivel, mas a tela segue funcional.',
+        );
+        setErrorMessage('');
       } finally {
         setIsLoading(false);
       }
     };
 
     void run();
-  }, [loadAppointments, loadCoreData, selectedDate]);
+  }, [loadAppointments, loadCoreData, loadDemoData, selectedDate]);
 
   async function onCreateAppointment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -233,6 +329,50 @@ export default function Home() {
     setErrorMessage('');
 
     try {
+      if (isDemoMode) {
+        const patient = patients.find((item) => item.id === appointmentForm.patientId);
+        const tutor = tutors.find((item) => item.id === patient?.tutorId);
+
+        if (!patient || !tutor) {
+          throw new Error('Paciente ou tutor invalido para agendamento.');
+        }
+
+        const created: Appointment = {
+          id: `demo-appt-${Date.now()}`,
+          patientId: patient.id,
+          tutorId: tutor.id,
+          veterinarianName: appointmentForm.veterinarianName,
+          startsAt: joinDateAndTime(selectedDate, appointmentForm.startsAt),
+          endsAt: joinDateAndTime(selectedDate, appointmentForm.endsAt),
+          reason: appointmentForm.reason,
+          status: 'SCHEDULED',
+          notes: null,
+          patient: {
+            id: patient.id,
+            name: patient.name,
+            species: patient.species,
+            breed: patient.breed,
+          },
+          tutor: {
+            id: tutor.id,
+            name: tutor.name,
+            phone: tutor.phone,
+          },
+        };
+
+        setAppointments((current) =>
+          [...current, created].sort((a, b) => {
+            return new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime();
+          }),
+        );
+        setAppointmentForm((current) => ({
+          ...current,
+          reason: '',
+        }));
+        setStatusMessage('Consulta agendada com sucesso (demonstracao).');
+        return;
+      }
+
       const created = await request<Appointment>('/appointments', {
         method: 'POST',
         body: JSON.stringify({
@@ -263,6 +403,21 @@ export default function Home() {
     setErrorMessage('');
 
     try {
+      if (isDemoMode) {
+        setAppointments((current) =>
+          current.map((item) =>
+            item.id === id
+              ? {
+                  ...item,
+                  status,
+                }
+              : item,
+          ),
+        );
+        setStatusMessage('Status atualizado (demonstracao).');
+        return;
+      }
+
       const updated = await request<Appointment>(`/appointments/${id}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ status }),
@@ -288,6 +443,11 @@ export default function Home() {
               <h1 className="text-3xl font-semibold tracking-tight text-slate-900 md:text-5xl">
                 Agenda Clinica
               </h1>
+              {isDemoMode && (
+                <p className="mt-2 inline-flex items-center rounded-sm bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
+                  Modo demonstracao
+                </p>
+              )}
               <p className="mt-3 max-w-2xl text-sm text-slate-600 md:text-base">
                 Painel de operacao diaria para organizar consultas, acompanhar status e reduzir
                 conflito de horario por veterinario.
