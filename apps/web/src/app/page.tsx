@@ -20,6 +20,22 @@ type ApiErrorEnvelope = {
   meta: ApiMeta;
 };
 
+type ActorRole = 'ADMIN' | 'VETERINARIAN' | 'RECEPTION';
+
+type AuthUser = {
+  id: string;
+  name: string;
+  email: string;
+  role: ActorRole;
+  active: boolean;
+};
+
+type LoginResponse = {
+  accessToken: string;
+  expiresInSeconds: number;
+  user: AuthUser;
+};
+
 type Tutor = {
   id: string;
   name: string;
@@ -66,40 +82,6 @@ type Appointment = {
   };
 };
 
-type MedicalRecordStatus = 'DRAFT' | 'FINALIZED';
-
-type MedicalRecord = {
-  id: string;
-  appointmentId: string;
-  status: MedicalRecordStatus;
-  chiefComplaint: string | null;
-  symptomsOnset: string | null;
-  clinicalHistory: string | null;
-  physicalExam: string | null;
-  presumptiveDiagnosis: string | null;
-  conduct: string | null;
-  guidance: string | null;
-  recommendedReturnAt: string | null;
-  finalizedAt: string | null;
-};
-
-type SideMode = 'schedule' | 'record' | 'profiles';
-type ActorRole = 'ADMIN' | 'VETERINARIAN' | 'RECEPTION';
-
-type AuthUser = {
-  id: string;
-  name: string;
-  email: string;
-  role: ActorRole;
-  active: boolean;
-};
-
-type LoginResponse = {
-  accessToken: string;
-  expiresInSeconds: number;
-  user: AuthUser;
-};
-
 type AccessProfile = {
   id: string;
   name: string;
@@ -110,86 +92,155 @@ type AccessProfile = {
   updatedAt: string;
 };
 
-type MedicalRecordForm = {
-  chiefComplaint: string;
-  symptomsOnset: string;
-  clinicalHistory: string;
-  physicalExam: string;
-  presumptiveDiagnosis: string;
-  conduct: string;
-  guidance: string;
-  recommendedReturnAt: string;
+type WorkspaceSection =
+  | 'consultations'
+  | 'scheduling'
+  | 'users'
+  | 'patients'
+  | 'settings';
+
+type ApiRequestOptions = RequestInit & {
+  skipAuth?: boolean;
+  timeoutMs?: number;
+  roleOverride?: ActorRole;
+  tokenOverride?: string;
 };
 
-type StatusVisual = {
+type DemoDataset = {
+  tutors: Tutor[];
+  patients: Patient[];
+  appointments: Appointment[];
+  profiles: AccessProfile[];
+};
+
+type SectionItem = {
+  id: WorkspaceSection;
   label: string;
-  stripe: string;
-  text: string;
+  description: string;
 };
 
 const API_BASE =
   process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
 
-const STATUS_VISUAL: Record<AppointmentStatus, StatusVisual> = {
+const ROLE_LABEL: Record<ActorRole, string> = {
+  ADMIN: 'Administrador',
+  VETERINARIAN: 'Veterinario',
+  RECEPTION: 'Recepcao',
+};
+
+const SECTION_ITEMS: SectionItem[] = [
+  {
+    id: 'consultations',
+    label: 'Consultas',
+    description: 'Agenda clinica do dia e status dos atendimentos.',
+  },
+  {
+    id: 'scheduling',
+    label: 'Agendamentos',
+    description: 'Crie novas consultas em uma pagina dedicada.',
+  },
+  {
+    id: 'users',
+    label: 'Cadastrar usuario',
+    description: 'Gestao de perfis de acesso da equipe.',
+  },
+  {
+    id: 'patients',
+    label: 'Pacientes',
+    description: 'Visualizacao de pacientes e respectivos tutores.',
+  },
+  {
+    id: 'settings',
+    label: 'Configuracoes',
+    description: 'Preferencias operacionais do EasyVet.',
+  },
+];
+
+const STATUS_VISUAL: Record<
+  AppointmentStatus,
+  { label: string; textClass: string; dotClass: string }
+> = {
   SCHEDULED: {
     label: 'Agendada',
-    stripe: 'bg-slate-300',
-    text: 'text-slate-600',
+    textClass: 'text-slate-700',
+    dotClass: 'bg-slate-400',
   },
   CONFIRMED: {
     label: 'Confirmada',
-    stripe: 'bg-cyan-500',
-    text: 'text-cyan-700',
+    textClass: 'text-cyan-700',
+    dotClass: 'bg-cyan-500',
   },
   IN_PROGRESS: {
     label: 'Em atendimento',
-    stripe: 'bg-amber-500',
-    text: 'text-amber-700',
+    textClass: 'text-amber-700',
+    dotClass: 'bg-amber-500',
   },
   COMPLETED: {
     label: 'Concluida',
-    stripe: 'bg-emerald-500',
-    text: 'text-emerald-700',
+    textClass: 'text-emerald-700',
+    dotClass: 'bg-emerald-500',
   },
   CANCELED: {
     label: 'Cancelada',
-    stripe: 'bg-rose-500',
-    text: 'text-rose-700',
+    textClass: 'text-rose-700',
+    dotClass: 'bg-rose-500',
   },
   NO_SHOW: {
     label: 'Nao compareceu',
-    stripe: 'bg-fuchsia-500',
-    text: 'text-fuchsia-700',
+    textClass: 'text-fuchsia-700',
+    dotClass: 'bg-fuchsia-500',
   },
 };
 
-const ROLE_OPTIONS: Array<{ value: ActorRole; label: string }> = [
-  { value: 'ADMIN', label: 'Admin' },
-  { value: 'VETERINARIAN', label: 'Veterinario' },
-  { value: 'RECEPTION', label: 'Recepcao' },
+const DEMO_CREDENTIALS: Array<{
+  email: string;
+  password: string;
+  user: AuthUser;
+}> = [
+  {
+    email: 'admin@easyvet.local',
+    password: 'easyvet123',
+    user: {
+      id: 'demo-user-admin',
+      name: 'Administrador EasyVet',
+      email: 'admin@easyvet.local',
+      role: 'ADMIN',
+      active: true,
+    },
+  },
+  {
+    email: 'vet@easyvet.local',
+    password: 'easyvet123',
+    user: {
+      id: 'demo-user-vet',
+      name: 'Veterinario EasyVet',
+      email: 'vet@easyvet.local',
+      role: 'VETERINARIAN',
+      active: true,
+    },
+  },
+  {
+    email: 'recepcao@easyvet.local',
+    password: 'easyvet123',
+    user: {
+      id: 'demo-user-reception',
+      name: 'Recepcao EasyVet',
+      email: 'recepcao@easyvet.local',
+      role: 'RECEPTION',
+      active: true,
+    },
+  },
 ];
-
-function emptyMedicalRecordForm(): MedicalRecordForm {
-  return {
-    chiefComplaint: '',
-    symptomsOnset: '',
-    clinicalHistory: '',
-    physicalExam: '',
-    presumptiveDiagnosis: '',
-    conduct: '',
-    guidance: '',
-    recommendedReturnAt: '',
-  };
-}
 
 function toLocalISODate(date: Date): string {
   const offset = date.getTimezoneOffset();
-  const local = new Date(date.getTime() - offset * 60000);
-  return local.toISOString().slice(0, 10);
+  const localDate = new Date(date.getTime() - offset * 60000);
+  return localDate.toISOString().slice(0, 10);
 }
 
-function formatDateLabel(dateIso: string): string {
+function formatDayLabel(dateIso: string): string {
   const date = new Date(`${dateIso}T12:00:00`);
+
   return new Intl.DateTimeFormat('pt-BR', {
     weekday: 'long',
     day: '2-digit',
@@ -219,54 +270,215 @@ function joinDateAndTime(date: string, time: string): string {
   return `${date}T${time}:00`;
 }
 
-function normalizeOptionalText(value: string): string | undefined {
-  const normalized = value.trim();
-  return normalized.length > 0 ? normalized : undefined;
+function sortAppointments(data: Appointment[]): Appointment[] {
+  return [...data].sort((first, second) => {
+    return new Date(first.startsAt).getTime() - new Date(second.startsAt).getTime();
+  });
 }
 
-function recordToForm(record: MedicalRecord): MedicalRecordForm {
+function normalizeErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) {
+    return fallback;
+  }
+
+  if (error.message.includes('AUTH_INVALID_CREDENTIALS')) {
+    return 'E-mail ou senha invalidos.';
+  }
+
+  if (error.message.includes('API_TIMEOUT')) {
+    return 'API indisponivel no momento (timeout).';
+  }
+
+  if (error.message.includes('NETWORK_ERROR')) {
+    return 'API indisponivel no momento (erro de conexao).';
+  }
+
+  return error.message;
+}
+
+function createDemoDataset(date: string, fallbackVetName: string): DemoDataset {
+  const tutors: Tutor[] = [
+    {
+      id: 'demo-tutor-1',
+      name: 'Marina Araujo',
+      document: '123.456.789-10',
+      phone: '(11) 99999-1001',
+    },
+    {
+      id: 'demo-tutor-2',
+      name: 'Carlos Mendes',
+      document: '987.654.321-00',
+      phone: '(11) 98888-2202',
+    },
+    {
+      id: 'demo-tutor-3',
+      name: 'Bianca Costa',
+      document: '045.367.810-02',
+      phone: '(11) 97777-7733',
+    },
+  ];
+
+  const patients: Patient[] = [
+    {
+      id: 'demo-patient-1',
+      tutorId: 'demo-tutor-1',
+      name: 'Thor',
+      species: 'Canino',
+      breed: 'Labrador',
+    },
+    {
+      id: 'demo-patient-2',
+      tutorId: 'demo-tutor-2',
+      name: 'Mia',
+      species: 'Felino',
+      breed: 'Siames',
+    },
+    {
+      id: 'demo-patient-3',
+      tutorId: 'demo-tutor-3',
+      name: 'Luna',
+      species: 'Canino',
+      breed: 'Shih Tzu',
+    },
+  ];
+
+  const appointments: Appointment[] = [
+    {
+      id: 'demo-appt-1',
+      patientId: 'demo-patient-1',
+      tutorId: 'demo-tutor-1',
+      veterinarianName: fallbackVetName,
+      startsAt: `${date}T09:00:00`,
+      endsAt: `${date}T09:30:00`,
+      reason: 'Consulta de rotina',
+      status: 'IN_PROGRESS',
+      notes: null,
+      patient: {
+        id: 'demo-patient-1',
+        name: 'Thor',
+        species: 'Canino',
+        breed: 'Labrador',
+      },
+      tutor: {
+        id: 'demo-tutor-1',
+        name: 'Marina Araujo',
+        phone: '(11) 99999-1001',
+      },
+    },
+    {
+      id: 'demo-appt-2',
+      patientId: 'demo-patient-2',
+      tutorId: 'demo-tutor-2',
+      veterinarianName: fallbackVetName,
+      startsAt: `${date}T10:30:00`,
+      endsAt: `${date}T11:00:00`,
+      reason: 'Retorno dermatologico',
+      status: 'SCHEDULED',
+      notes: null,
+      patient: {
+        id: 'demo-patient-2',
+        name: 'Mia',
+        species: 'Felino',
+        breed: 'Siames',
+      },
+      tutor: {
+        id: 'demo-tutor-2',
+        name: 'Carlos Mendes',
+        phone: '(11) 98888-2202',
+      },
+    },
+    {
+      id: 'demo-appt-3',
+      patientId: 'demo-patient-3',
+      tutorId: 'demo-tutor-3',
+      veterinarianName: fallbackVetName,
+      startsAt: `${date}T14:00:00`,
+      endsAt: `${date}T14:30:00`,
+      reason: 'Vacina anual',
+      status: 'CONFIRMED',
+      notes: null,
+      patient: {
+        id: 'demo-patient-3',
+        name: 'Luna',
+        species: 'Canino',
+        breed: 'Shih Tzu',
+      },
+      tutor: {
+        id: 'demo-tutor-3',
+        name: 'Bianca Costa',
+        phone: '(11) 97777-7733',
+      },
+    },
+  ];
+
+  const now = new Date().toISOString();
+
+  const profiles: AccessProfile[] = [
+    {
+      id: 'demo-user-admin',
+      name: 'Administrador EasyVet',
+      email: 'admin@easyvet.local',
+      role: 'ADMIN',
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'demo-user-vet',
+      name: 'Veterinario EasyVet',
+      email: 'vet@easyvet.local',
+      role: 'VETERINARIAN',
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'demo-user-reception',
+      name: 'Recepcao EasyVet',
+      email: 'recepcao@easyvet.local',
+      role: 'RECEPTION',
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+
   return {
-    chiefComplaint: record.chiefComplaint ?? '',
-    symptomsOnset: record.symptomsOnset ?? '',
-    clinicalHistory: record.clinicalHistory ?? '',
-    physicalExam: record.physicalExam ?? '',
-    presumptiveDiagnosis: record.presumptiveDiagnosis ?? '',
-    conduct: record.conduct ?? '',
-    guidance: record.guidance ?? '',
-    recommendedReturnAt: record.recommendedReturnAt
-      ? record.recommendedReturnAt.slice(0, 10)
-      : '',
+    tutors,
+    patients,
+    appointments,
+    profiles,
   };
 }
 
 export default function Home() {
+  const [authToken, setAuthToken] = useState('');
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+
+  const [authForm, setAuthForm] = useState({
+    email: 'vet@easyvet.local',
+    password: 'easyvet123',
+  });
+
+  const [activeSection, setActiveSection] =
+    useState<WorkspaceSection>('consultations');
+  const [selectedDate, setSelectedDate] = useState<string>(
+    toLocalISODate(new Date()),
+  );
+
   const [tutors, setTutors] = useState<Tutor[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [profiles, setProfiles] = useState<AccessProfile[]>([]);
-  const [medicalRecords, setMedicalRecords] = useState<
-    Record<string, MedicalRecord>
-  >({});
 
-  const [isDemoMode, setIsDemoMode] = useState(false);
-  const [sideMode, setSideMode] = useState<SideMode>('schedule');
-  const [activeRole, setActiveRole] = useState<ActorRole>('VETERINARIAN');
-  const [authToken, setAuthToken] = useState('');
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [isAuthenticating, setIsAuthenticating] = useState(false);
-  const [selectedAppointmentId, setSelectedAppointmentId] = useState<
-    string | null
-  >(null);
+  const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
+  const [isProfileSaving, setIsProfileSaving] = useState(false);
+  const [isAppointmentSaving, setIsAppointmentSaving] = useState(false);
 
-  const [selectedDate, setSelectedDate] = useState<string>(
-    toLocalISODate(new Date()),
-  );
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isRecordSaving, setIsRecordSaving] = useState(false);
-  const [isProfilesLoading, setIsProfilesLoading] = useState(false);
-  const [isProfileSaving, setIsProfileSaving] = useState(false);
 
   const [appointmentForm, setAppointmentForm] = useState({
     patientId: '',
@@ -276,12 +488,6 @@ export default function Home() {
     reason: '',
   });
 
-  const [recordForm, setRecordForm] =
-    useState<MedicalRecordForm>(emptyMedicalRecordForm());
-  const [authForm, setAuthForm] = useState({
-    email: 'vet@easyvet.local',
-    password: 'easyvet123',
-  });
   const [profileForm, setProfileForm] = useState({
     name: '',
     email: '',
@@ -289,78 +495,77 @@ export default function Home() {
     password: 'easyvet123',
   });
 
-  const selectedAppointment = useMemo(
-    () => appointments.find((item) => item.id === selectedAppointmentId) ?? null,
-    [appointments, selectedAppointmentId],
-  );
-
-  const selectedRecord = useMemo(() => {
-    if (!selectedAppointmentId) {
-      return null;
-    }
-
-    return medicalRecords[selectedAppointmentId] ?? null;
-  }, [medicalRecords, selectedAppointmentId]);
-
-  const activeAppointments = useMemo(
-    () => appointments.filter((item) => item.status !== 'CANCELED'),
-    [appointments],
-  );
-  const canFinalizeRecord = activeRole !== 'RECEPTION';
-  const canManageProfiles = activeRole === 'ADMIN';
-
-  const metrics = useMemo(() => {
-    const total = appointments.length;
-    const confirmed = appointments.filter(
-      (item) => item.status === 'CONFIRMED',
-    ).length;
-    const inProgress = appointments.filter(
-      (item) => item.status === 'IN_PROGRESS',
-    ).length;
-    const completed = appointments.filter(
-      (item) => item.status === 'COMPLETED',
-    ).length;
-
-    return { total, confirmed, inProgress, completed };
-  }, [appointments]);
-
   const request = useCallback(
-    async <T,>(path: string, options?: RequestInit): Promise<T> => {
+    async <T,>(path: string, options?: ApiRequestOptions): Promise<T> => {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 2500);
+      const timeout = setTimeout(() => {
+        controller.abort();
+      }, options?.timeoutMs ?? 5000);
 
       try {
+        const headers = new Headers(options?.headers ?? {});
+
+        if (options?.body && !headers.has('Content-Type')) {
+          headers.set('Content-Type', 'application/json');
+        }
+
+        if (!headers.has('x-user-role')) {
+          headers.set(
+            'x-user-role',
+            options?.roleOverride ?? authUser?.role ?? 'VETERINARIAN',
+          );
+        }
+
+        const authTokenToUse = options?.tokenOverride ?? authToken;
+        if (!options?.skipAuth && authTokenToUse) {
+          headers.set('Authorization', `Bearer ${authTokenToUse}`);
+        }
+
         const response = await fetch(`${API_BASE}${path}`, {
           ...options,
+          headers,
           signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json',
-            'x-user-role': activeRole,
-            ...(authToken
-              ? {
-                  Authorization: `Bearer ${authToken}`,
-                }
-              : {}),
-            ...(options?.headers ?? {}),
-          },
           cache: 'no-store',
         });
 
-        const payload = (await response.json()) as
-          | ApiEnvelope<T>
-          | ApiErrorEnvelope;
+        let payload: ApiEnvelope<T> | ApiErrorEnvelope | null = null;
 
-        if (!response.ok) {
-          const apiError = payload as ApiErrorEnvelope;
-          throw new Error(`${apiError.error.code}: ${apiError.error.message}`);
+        try {
+          payload = (await response.json()) as ApiEnvelope<T> | ApiErrorEnvelope;
+        } catch {
+          payload = null;
         }
 
-        return (payload as ApiEnvelope<T>).data;
+        if (!response.ok) {
+          if (payload && 'error' in payload) {
+            const details = payload.error.details
+              ?.map((detail) => `${detail.field}: ${detail.issue}`)
+              .join(', ');
+
+            if (details) {
+              throw new Error(
+                `${payload.error.code}: ${payload.error.message} (${details})`,
+              );
+            }
+
+            throw new Error(`${payload.error.code}: ${payload.error.message}`);
+          }
+
+          throw new Error(`HTTP_ERROR_${response.status}: falha na requisicao`);
+        }
+
+        if (!payload || !('data' in payload)) {
+          throw new Error('API_INVALID_RESPONSE: resposta invalida da API');
+        }
+
+        return payload.data;
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') {
-          throw new Error(
-            'API_TIMEOUT: Tempo limite de resposta da API excedido',
-          );
+          throw new Error('API_TIMEOUT: tempo limite de resposta excedido');
+        }
+
+        if (error instanceof TypeError) {
+          throw new Error('NETWORK_ERROR: nao foi possivel conectar na API');
         }
 
         throw error;
@@ -368,330 +573,213 @@ export default function Home() {
         clearTimeout(timeout);
       }
     },
-    [activeRole, authToken],
+    [authToken, authUser],
   );
 
-  const loadCoreData = useCallback(async () => {
-    const [tutorData, patientData] = await Promise.all([
-      request<Tutor[]>('/tutors'),
-      request<Patient[]>('/patients'),
-    ]);
+  const canManageUsers = authUser?.role === 'ADMIN';
 
-    setTutors(tutorData);
-    setPatients(patientData);
+  const activeSectionMeta = useMemo(() => {
+    return SECTION_ITEMS.find((item) => item.id === activeSection) ?? SECTION_ITEMS[0];
+  }, [activeSection]);
 
-    if (!appointmentForm.patientId && patientData.length > 0) {
-      setAppointmentForm((current) => ({ ...current, patientId: patientData[0].id }));
-    }
-  }, [appointmentForm.patientId, request]);
-
-  const loadAppointments = useCallback(
-    async (date: string) => {
-      const data = await request<Appointment[]>(`/appointments?date=${date}`);
-      setAppointments(data);
-    },
-    [request],
+  const sortedAppointments = useMemo(
+    () => sortAppointments(appointments),
+    [appointments],
   );
 
-  const loadDemoData = useCallback((date: string) => {
-    const demoTutors: Tutor[] = [
-      {
-        id: 'demo-tutor-1',
-        name: 'Marina Araujo',
-        document: '123.456.789-10',
-        phone: '(11) 99999-1001',
-      },
-      {
-        id: 'demo-tutor-2',
-        name: 'Carlos Mendes',
-        document: '987.654.321-00',
-        phone: '(11) 98888-2202',
-      },
-    ];
+  const appointmentMetrics = useMemo(() => {
+    const total = appointments.length;
+    const pending = appointments.filter((item) => item.status === 'SCHEDULED').length;
+    const inProgress = appointments.filter(
+      (item) => item.status === 'IN_PROGRESS',
+    ).length;
+    const finished = appointments.filter((item) => item.status === 'COMPLETED').length;
 
-    const demoPatients: Patient[] = [
-      {
-        id: 'demo-patient-1',
-        tutorId: 'demo-tutor-1',
-        name: 'Thor',
-        species: 'Canino',
-        breed: 'Labrador',
-      },
-      {
-        id: 'demo-patient-2',
-        tutorId: 'demo-tutor-2',
-        name: 'Mia',
-        species: 'Felino',
-        breed: 'Siames',
-      },
-    ];
-
-    const demoAppointments: Appointment[] = [
-      {
-        id: 'demo-appt-1',
-        patientId: 'demo-patient-1',
-        tutorId: 'demo-tutor-1',
-        veterinarianName: 'Dra. Camila Souza',
-        startsAt: `${date}T09:00:00`,
-        endsAt: `${date}T09:30:00`,
-        reason: 'Consulta de rotina',
-        status: 'IN_PROGRESS',
-        notes: null,
-        patient: {
-          id: 'demo-patient-1',
-          name: 'Thor',
-          species: 'Canino',
-          breed: 'Labrador',
-        },
-        tutor: {
-          id: 'demo-tutor-1',
-          name: 'Marina Araujo',
-          phone: '(11) 99999-1001',
-        },
-      },
-      {
-        id: 'demo-appt-2',
-        patientId: 'demo-patient-2',
-        tutorId: 'demo-tutor-2',
-        veterinarianName: 'Dr. Rafael Lima',
-        startsAt: `${date}T10:00:00`,
-        endsAt: `${date}T10:30:00`,
-        reason: 'Retorno dermatologico',
-        status: 'SCHEDULED',
-        notes: null,
-        patient: {
-          id: 'demo-patient-2',
-          name: 'Mia',
-          species: 'Felino',
-          breed: 'Siames',
-        },
-        tutor: {
-          id: 'demo-tutor-2',
-          name: 'Carlos Mendes',
-          phone: '(11) 98888-2202',
-        },
-      },
-    ];
-
-    const demoRecords: Record<string, MedicalRecord> = {
-      'demo-appt-1': {
-        id: 'demo-record-1',
-        appointmentId: 'demo-appt-1',
-        status: 'DRAFT',
-        chiefComplaint: 'Prurido em regiao cervical',
-        symptomsOnset: 'Ha 3 dias',
-        clinicalHistory: 'Paciente ativo, sem alteracao de apetite.',
-        physicalExam: '',
-        presumptiveDiagnosis: '',
-        conduct: '',
-        guidance: '',
-        recommendedReturnAt: null,
-        finalizedAt: null,
-      },
+    return {
+      total,
+      pending,
+      inProgress,
+      finished,
     };
+  }, [appointments]);
 
-    const now = new Date().toISOString();
-    const demoProfiles: AccessProfile[] = [
-      {
-        id: 'demo-user-admin',
-        name: 'Administrador EasyVet',
-        email: 'admin@easyvet.local',
-        role: 'ADMIN',
-        active: true,
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: 'demo-user-vet',
-        name: 'Veterinario EasyVet',
-        email: 'vet@easyvet.local',
-        role: 'VETERINARIAN',
-        active: true,
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: 'demo-user-reception',
-        name: 'Recepcao EasyVet',
-        email: 'recepcao@easyvet.local',
-        role: 'RECEPTION',
-        active: true,
-        createdAt: now,
-        updatedAt: now,
-      },
-    ];
+  const patientOptions = useMemo(() => {
+    return patients.map((patient) => {
+      const tutor = tutors.find((item) => item.id === patient.tutorId);
 
-    setTutors(demoTutors);
-    setPatients(demoPatients);
-    setAppointments(demoAppointments);
-    setMedicalRecords(demoRecords);
-    setProfiles(demoProfiles);
-    setAppointmentForm((current) => ({
-      ...current,
-      patientId: demoPatients[0]?.id ?? '',
-      veterinarianName: current.veterinarianName || 'Dra. Camila Souza',
-    }));
-    setIsDemoMode(true);
-  }, []);
+      return {
+        id: patient.id,
+        label: `${patient.name} - ${tutor?.name ?? 'Tutor'}`,
+      };
+    });
+  }, [patients, tutors]);
 
-  useEffect(() => {
-    const run = async () => {
-      setIsLoading(true);
-      setErrorMessage('');
-
-      try {
-        await loadCoreData();
-        await loadAppointments(selectedDate);
-        setIsDemoMode(false);
-      } catch {
-        loadDemoData(selectedDate);
-        setStatusMessage(
-          'Modo demonstracao ativo: API indisponivel, mas a tela segue funcional.',
-        );
-        setErrorMessage('');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    void run();
-  }, [loadAppointments, loadCoreData, loadDemoData, selectedDate]);
-
-  useEffect(() => {
-    if (!selectedAppointmentId) {
+  const bootstrapWorkspace = useCallback(async () => {
+    if (!authUser) {
       return;
     }
 
-    const exists = appointments.some((item) => item.id === selectedAppointmentId);
-    if (!exists) {
-      setSelectedAppointmentId(null);
-      setSideMode('schedule');
-      setRecordForm(emptyMedicalRecordForm());
+    setIsWorkspaceLoading(true);
+    setErrorMessage('');
+
+    try {
+      const [tutorData, patientData, appointmentData] = await Promise.all([
+        request<Tutor[]>('/tutors'),
+        request<Patient[]>('/patients'),
+        request<Appointment[]>(`/appointments?date=${selectedDate}`),
+      ]);
+
+      setTutors(tutorData);
+      setPatients(patientData);
+      setAppointments(sortAppointments(appointmentData));
+
+      if (authUser.role === 'ADMIN') {
+        const profileData = await request<AccessProfile[]>('/profiles');
+        setProfiles(profileData);
+      } else {
+        setProfiles([]);
+      }
+
+      setAppointmentForm((current) => ({
+        ...current,
+        patientId: current.patientId || patientData[0]?.id || '',
+        veterinarianName: current.veterinarianName || authUser.name,
+      }));
+
+      setIsDemoMode(false);
+    } catch {
+      const demoDataset = createDemoDataset(selectedDate, authUser.name);
+
+      setTutors(demoDataset.tutors);
+      setPatients(demoDataset.patients);
+      setAppointments(demoDataset.appointments);
+      setProfiles(demoDataset.profiles);
+
+      setAppointmentForm((current) => ({
+        ...current,
+        patientId: current.patientId || demoDataset.patients[0]?.id || '',
+        veterinarianName: current.veterinarianName || authUser.name,
+      }));
+
+      setIsDemoMode(true);
+      setStatusMessage(
+        'Modo demonstracao ativo: API indisponivel, mas a navegacao segue funcional.',
+      );
+      setErrorMessage('');
+    } finally {
+      setIsWorkspaceLoading(false);
     }
-  }, [appointments, selectedAppointmentId]);
+  }, [authUser, request, selectedDate]);
 
   useEffect(() => {
     if (!authUser) {
       return;
     }
 
-    setActiveRole(authUser.role);
-  }, [authUser]);
+    void bootstrapWorkspace();
+  }, [authUser, bootstrapWorkspace]);
 
-  const loadProfiles = useCallback(async () => {
-    if (!authUser || !canManageProfiles) {
-      return;
-    }
+  async function onLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
 
-    setIsProfilesLoading(true);
+    setStatusMessage('');
+    setErrorMessage('');
+    setIsAuthenticating(true);
 
     try {
-      if (isDemoMode) {
-        return;
-      }
+      const result = await request<LoginResponse>('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: authForm.email,
+          password: authForm.password,
+        }),
+        skipAuth: true,
+      });
 
-      const data = await request<AccessProfile[]>('/profiles');
-      setProfiles(data);
+      setAuthToken(result.accessToken);
+      setAuthUser(result.user);
+      setActiveSection('consultations');
+      setStatusMessage(`Bem-vindo, ${result.user.name}.`);
+      setIsDemoMode(false);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Falha ao carregar perfis.';
-      setErrorMessage(message);
-    } finally {
-      setIsProfilesLoading(false);
-    }
-  }, [authUser, canManageProfiles, isDemoMode, request]);
+      const message = normalizeErrorMessage(
+        error,
+        'Nao foi possivel autenticar agora.',
+      );
 
-  useEffect(() => {
-    if (sideMode !== 'profiles') {
-      return;
-    }
-
-    void loadProfiles();
-  }, [loadProfiles, sideMode]);
-
-  const openMedicalRecord = useCallback(
-    async (appointment: Appointment) => {
-      setStatusMessage('');
-      setErrorMessage('');
-      setSideMode('record');
-      setSelectedAppointmentId(appointment.id);
-
-      if (isDemoMode) {
-        const existing = medicalRecords[appointment.id];
-        if (existing) {
-          setRecordForm(recordToForm(existing));
-          return;
-        }
-
-        const created: MedicalRecord = {
-          id: `demo-record-${Date.now()}`,
-          appointmentId: appointment.id,
-          status: 'DRAFT',
-          chiefComplaint: '',
-          symptomsOnset: '',
-          clinicalHistory: '',
-          physicalExam: '',
-          presumptiveDiagnosis: '',
-          conduct: '',
-          guidance: '',
-          recommendedReturnAt: null,
-          finalizedAt: null,
-        };
-
-        setMedicalRecords((current) => ({
-          ...current,
-          [appointment.id]: created,
-        }));
-        setRecordForm(recordToForm(created));
-        return;
-      }
-
-      try {
-        const started = await request<MedicalRecord>(
-          `/appointments/${appointment.id}/medical-record/start`,
-          {
-            method: 'POST',
-          },
+      const fallbackUser = DEMO_CREDENTIALS.find((item) => {
+        return (
+          item.email === authForm.email.trim().toLowerCase() &&
+          item.password === authForm.password
         );
+      });
 
-        setMedicalRecords((current) => ({
-          ...current,
-          [appointment.id]: started,
-        }));
-        setRecordForm(recordToForm(started));
-      } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : 'Falha ao abrir prontuario da consulta.';
+      const isConnectivityIssue =
+        message.includes('timeout') ||
+        message.includes('conexao') ||
+        message.includes('API indisponivel');
+
+      if (fallbackUser && isConnectivityIssue) {
+        setAuthToken('demo-token');
+        setAuthUser(fallbackUser.user);
+        setActiveSection('consultations');
+        setIsDemoMode(true);
+        setStatusMessage(
+          'Login em modo demonstracao ativo porque a API esta indisponivel.',
+        );
+        setErrorMessage('');
+      } else {
         setErrorMessage(message);
       }
-    },
-    [isDemoMode, medicalRecords, request],
-  );
+    } finally {
+      setIsAuthenticating(false);
+    }
+  }
+
+  function onLogout() {
+    setAuthToken('');
+    setAuthUser(null);
+    setTutors([]);
+    setPatients([]);
+    setAppointments([]);
+    setProfiles([]);
+    setIsDemoMode(false);
+    setErrorMessage('');
+    setStatusMessage('Sessao finalizada.');
+    setActiveSection('consultations');
+  }
 
   async function onCreateAppointment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (!authUser) {
+      return;
+    }
+
     setStatusMessage('');
     setErrorMessage('');
+    setIsAppointmentSaving(true);
 
     try {
+      const patient = patients.find((item) => item.id === appointmentForm.patientId);
+      const tutor = tutors.find((item) => item.id === patient?.tutorId);
+
+      if (!patient || !tutor) {
+        throw new Error('Selecione um paciente valido para continuar.');
+      }
+
+      const startsAt = joinDateAndTime(selectedDate, appointmentForm.startsAt);
+      const endsAt = joinDateAndTime(selectedDate, appointmentForm.endsAt);
+
       if (isDemoMode) {
-        const patient = patients.find((item) => item.id === appointmentForm.patientId);
-        const tutor = tutors.find((item) => item.id === patient?.tutorId);
-
-        if (!patient || !tutor) {
-          throw new Error('Paciente ou tutor invalido para agendamento.');
-        }
-
         const created: Appointment = {
           id: `demo-appt-${Date.now()}`,
           patientId: patient.id,
           tutorId: tutor.id,
-          veterinarianName: appointmentForm.veterinarianName,
-          startsAt: joinDateAndTime(selectedDate, appointmentForm.startsAt),
-          endsAt: joinDateAndTime(selectedDate, appointmentForm.endsAt),
-          reason: appointmentForm.reason,
+          veterinarianName: appointmentForm.veterinarianName.trim(),
+          startsAt,
+          endsAt,
+          reason: appointmentForm.reason.trim(),
           status: 'SCHEDULED',
           notes: null,
           patient: {
@@ -707,1140 +795,742 @@ export default function Home() {
           },
         };
 
-        setAppointments((current) =>
-          [...current, created].sort((a, b) => {
-            return new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime();
+        setAppointments((current) => sortAppointments([...current, created]));
+      } else {
+        const created = await request<Appointment>('/appointments', {
+          method: 'POST',
+          body: JSON.stringify({
+            patientId: appointmentForm.patientId,
+            veterinarianName: appointmentForm.veterinarianName.trim(),
+            startsAt,
+            endsAt,
+            reason: appointmentForm.reason.trim(),
           }),
-        );
-        setAppointmentForm((current) => ({
-          ...current,
-          reason: '',
-        }));
-        setStatusMessage('Consulta agendada com sucesso (demonstracao).');
-        return;
+        });
+
+        setAppointments((current) => sortAppointments([...current, created]));
       }
 
-      const created = await request<Appointment>('/appointments', {
-        method: 'POST',
-        body: JSON.stringify({
-          patientId: appointmentForm.patientId,
-          veterinarianName: appointmentForm.veterinarianName,
-          startsAt: joinDateAndTime(selectedDate, appointmentForm.startsAt),
-          endsAt: joinDateAndTime(selectedDate, appointmentForm.endsAt),
-          reason: appointmentForm.reason,
-        }),
-      });
-
-      setAppointments((current) =>
-        [...current, created].sort((a, b) => {
-          return new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime();
-        }),
-      );
       setAppointmentForm((current) => ({
         ...current,
         reason: '',
       }));
+
       setStatusMessage('Consulta agendada com sucesso.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Falha ao agendar consulta.';
-      setErrorMessage(message);
+      setErrorMessage(
+        normalizeErrorMessage(error, 'Falha ao criar agendamento.'),
+      );
+    } finally {
+      setIsAppointmentSaving(false);
     }
   }
 
-  async function onChangeStatus(id: string, status: AppointmentStatus) {
+  async function onChangeAppointmentStatus(
+    appointmentId: string,
+    status: AppointmentStatus,
+  ) {
     setStatusMessage('');
     setErrorMessage('');
 
     try {
       if (isDemoMode) {
         setAppointments((current) =>
-          current.map((item) =>
-            item.id === id
-              ? {
-                  ...item,
-                  status,
-                }
-              : item,
-          ),
+          current.map((item) => {
+            if (item.id !== appointmentId) {
+              return item;
+            }
+
+            return {
+              ...item,
+              status,
+            };
+          }),
         );
-        setStatusMessage('Status atualizado (demonstracao).');
-        return;
+      } else {
+        const updated = await request<Appointment>(
+          `/appointments/${appointmentId}/status`,
+          {
+            method: 'PATCH',
+            body: JSON.stringify({
+              status,
+            }),
+          },
+        );
+
+        setAppointments((current) =>
+          current.map((item) => {
+            if (item.id !== appointmentId) {
+              return item;
+            }
+
+            return updated;
+          }),
+        );
       }
 
-      const updated = await request<Appointment>(`/appointments/${id}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({ status }),
-      });
-
-      setAppointments((current) =>
-        current.map((item) => (item.id === id ? updated : item)),
-      );
-      setStatusMessage('Status atualizado.');
+      setStatusMessage('Status atualizado com sucesso.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Falha ao atualizar status.';
-      setErrorMessage(message);
+      setErrorMessage(
+        normalizeErrorMessage(error, 'Falha ao atualizar status da consulta.'),
+      );
     }
   }
 
-  async function onSaveRecordDraft() {
-    if (!selectedAppointmentId) {
+  async function onCreateProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!authUser || !canManageUsers) {
       return;
     }
 
     setStatusMessage('');
     setErrorMessage('');
-    setIsRecordSaving(true);
-
-    try {
-      const draftPayload = {
-        chiefComplaint: normalizeOptionalText(recordForm.chiefComplaint),
-        symptomsOnset: normalizeOptionalText(recordForm.symptomsOnset),
-        clinicalHistory: normalizeOptionalText(recordForm.clinicalHistory),
-        physicalExam: normalizeOptionalText(recordForm.physicalExam),
-        presumptiveDiagnosis: normalizeOptionalText(recordForm.presumptiveDiagnosis),
-        conduct: normalizeOptionalText(recordForm.conduct),
-        guidance: normalizeOptionalText(recordForm.guidance),
-        recommendedReturnAt:
-          normalizeOptionalText(recordForm.recommendedReturnAt) ?? undefined,
-      };
-
-      if (isDemoMode) {
-        const existing = medicalRecords[selectedAppointmentId] ?? {
-          id: `demo-record-${Date.now()}`,
-          appointmentId: selectedAppointmentId,
-          status: 'DRAFT' as MedicalRecordStatus,
-          chiefComplaint: null,
-          symptomsOnset: null,
-          clinicalHistory: null,
-          physicalExam: null,
-          presumptiveDiagnosis: null,
-          conduct: null,
-          guidance: null,
-          recommendedReturnAt: null,
-          finalizedAt: null,
-        };
-
-        const updated: MedicalRecord = {
-          ...existing,
-          status: 'DRAFT',
-          chiefComplaint: draftPayload.chiefComplaint ?? null,
-          symptomsOnset: draftPayload.symptomsOnset ?? null,
-          clinicalHistory: draftPayload.clinicalHistory ?? null,
-          physicalExam: draftPayload.physicalExam ?? null,
-          presumptiveDiagnosis: draftPayload.presumptiveDiagnosis ?? null,
-          conduct: draftPayload.conduct ?? null,
-          guidance: draftPayload.guidance ?? null,
-          recommendedReturnAt: draftPayload.recommendedReturnAt ?? null,
-        };
-
-        setMedicalRecords((current) => ({
-          ...current,
-          [selectedAppointmentId]: updated,
-        }));
-        setStatusMessage('Prontuario salvo como rascunho (demonstracao).');
-        return;
-      }
-
-      const updated = await request<MedicalRecord>(
-        `/appointments/${selectedAppointmentId}/medical-record/draft`,
-        {
-          method: 'PUT',
-          body: JSON.stringify(draftPayload),
-        },
-      );
-
-      setMedicalRecords((current) => ({
-        ...current,
-        [selectedAppointmentId]: updated,
-      }));
-      setStatusMessage('Prontuario salvo como rascunho.');
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : 'Falha ao salvar rascunho de prontuario.';
-      setErrorMessage(message);
-    } finally {
-      setIsRecordSaving(false);
-    }
-  }
-
-  async function onLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setStatusMessage('');
-    setErrorMessage('');
-    setIsAuthenticating(true);
-
-    try {
-      if (isDemoMode) {
-        const email = authForm.email.trim().toLowerCase();
-        const password = authForm.password.trim();
-
-        if (password !== 'easyvet123') {
-          throw new Error('AUTH_INVALID_CREDENTIALS: Senha invalida no modo demo.');
-        }
-
-        const demoUsers: Record<string, AuthUser> = {
-          'admin@easyvet.local': {
-            id: 'demo-user-admin',
-            name: 'Administrador EasyVet',
-            email: 'admin@easyvet.local',
-            role: 'ADMIN',
-            active: true,
-          },
-          'vet@easyvet.local': {
-            id: 'demo-user-vet',
-            name: 'Veterinario EasyVet',
-            email: 'vet@easyvet.local',
-            role: 'VETERINARIAN',
-            active: true,
-          },
-          'recepcao@easyvet.local': {
-            id: 'demo-user-reception',
-            name: 'Recepcao EasyVet',
-            email: 'recepcao@easyvet.local',
-            role: 'RECEPTION',
-            active: true,
-          },
-        };
-
-        const user = demoUsers[email];
-        if (!user) {
-          throw new Error('AUTH_INVALID_CREDENTIALS: Usuario nao encontrado no modo demo.');
-        }
-
-        setAuthToken('demo-session-token');
-        setAuthUser(user);
-        setActiveRole(user.role);
-        setStatusMessage(`Sessao iniciada como ${user.name} (demonstracao).`);
-        return;
-      }
-
-      const session = await request<LoginResponse>('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({
-          email: authForm.email,
-          password: authForm.password,
-        }),
-      });
-
-      setAuthToken(session.accessToken);
-      setAuthUser(session.user);
-      setActiveRole(session.user.role);
-      setStatusMessage(`Sessao iniciada como ${session.user.name}.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Falha ao autenticar.';
-      setErrorMessage(message);
-    } finally {
-      setIsAuthenticating(false);
-    }
-  }
-
-  function onLogout() {
-    setAuthToken('');
-    setAuthUser(null);
-    setSideMode('schedule');
-    setStatusMessage('Sessao encerrada.');
-  }
-
-  async function onCreateProfile(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setStatusMessage('');
-    setErrorMessage('');
     setIsProfileSaving(true);
 
     try {
-      const payload = {
-        name: profileForm.name.trim(),
-        email: profileForm.email.trim().toLowerCase(),
-        role: profileForm.role,
-        password: profileForm.password,
-      };
-
-      if (!payload.name || !payload.email || !payload.password) {
-        throw new Error('Preencha nome, e-mail e senha para criar o perfil.');
-      }
-
       if (isDemoMode) {
-        if (profiles.some((item) => item.email === payload.email)) {
-          throw new Error('PROFILE_EMAIL_ALREADY_EXISTS: E-mail ja cadastrado.');
-        }
+        const now = new Date().toISOString();
 
         const created: AccessProfile = {
           id: `demo-user-${Date.now()}`,
-          name: payload.name,
-          email: payload.email,
-          role: payload.role,
+          name: profileForm.name.trim(),
+          email: profileForm.email.trim().toLowerCase(),
+          role: profileForm.role,
           active: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
+          createdAt: now,
+          updatedAt: now,
         };
 
-        setProfiles((current) =>
-          [...current, created].sort((a, b) => a.name.localeCompare(b.name)),
-        );
-        setProfileForm((current) => ({
-          ...current,
-          name: '',
-          email: '',
-        }));
-        setStatusMessage('Perfil criado (demonstracao).');
-        return;
+        setProfiles((current) => sortProfiles([created, ...current]));
+      } else {
+        const created = await request<AccessProfile>('/profiles', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: profileForm.name.trim(),
+            email: profileForm.email.trim().toLowerCase(),
+            role: profileForm.role,
+            password: profileForm.password,
+          }),
+        });
+
+        setProfiles((current) => sortProfiles([created, ...current]));
       }
 
-      const created = await request<AccessProfile>('/profiles', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      });
-
-      setProfiles((current) =>
-        [...current, created].sort((a, b) => a.name.localeCompare(b.name)),
-      );
-      setProfileForm((current) => ({
-        ...current,
+      setProfileForm({
         name: '',
         email: '',
-      }));
+        role: 'VETERINARIAN',
+        password: 'easyvet123',
+      });
+
       setStatusMessage('Perfil criado com sucesso.');
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Falha ao criar perfil.';
-      setErrorMessage(message);
+      setErrorMessage(normalizeErrorMessage(error, 'Falha ao criar perfil.'));
     } finally {
       setIsProfileSaving(false);
     }
   }
 
   async function onUpdateProfileRole(profileId: string, role: ActorRole) {
+    if (!authUser || !canManageUsers) {
+      return;
+    }
+
     setStatusMessage('');
     setErrorMessage('');
 
     try {
       if (isDemoMode) {
         setProfiles((current) =>
-          current.map((item) =>
-            item.id === profileId
-              ? {
-                  ...item,
-                  role,
-                  updatedAt: new Date().toISOString(),
-                }
-              : item,
-          ),
+          current.map((profile) => {
+            if (profile.id !== profileId) {
+              return profile;
+            }
+
+            return {
+              ...profile,
+              role,
+              updatedAt: new Date().toISOString(),
+            };
+          }),
         );
-        setStatusMessage('Perfil atualizado (demonstracao).');
-        return;
+      } else {
+        const updated = await request<AccessProfile>(`/profiles/${profileId}/role`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            role,
+          }),
+        });
+
+        setProfiles((current) =>
+          current.map((profile) => {
+            if (profile.id !== profileId) {
+              return profile;
+            }
+
+            return updated;
+          }),
+        );
       }
 
-      const updated = await request<AccessProfile>(`/profiles/${profileId}/role`, {
-        method: 'PATCH',
-        body: JSON.stringify({ role }),
-      });
-
-      setProfiles((current) =>
-        current.map((item) => (item.id === profileId ? updated : item)),
-      );
       setStatusMessage('Perfil atualizado com sucesso.');
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Falha ao atualizar perfil.';
-      setErrorMessage(message);
+      setErrorMessage(
+        normalizeErrorMessage(error, 'Falha ao atualizar papel do perfil.'),
+      );
     }
   }
 
-  async function onFinalizeRecord() {
-    if (!canFinalizeRecord) {
-      setErrorMessage('Perfil de recepcao nao pode finalizar prontuario.');
-      return;
-    }
+  if (!authUser) {
+    return (
+      <main className="flex min-h-screen items-center justify-center px-6 py-10">
+        <section className="rise-in w-full max-w-md border border-slate-200 bg-white/85 px-8 py-10 shadow-[0_24px_60px_-38px_rgba(15,23,42,0.6)] backdrop-blur-sm">
+          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">EasyVet</p>
+          <h1 className="mt-3 text-3xl font-semibold text-slate-900">Acesso ao sistema</h1>
+          <p className="mt-2 text-sm text-slate-600">
+            Entre com e-mail e senha para abrir o painel clinico.
+          </p>
 
-    if (!selectedAppointmentId) {
-      setErrorMessage('Selecione uma consulta para finalizar o prontuario.');
-      return;
-    }
+          <form className="mt-8 grid gap-4" onSubmit={onLogin}>
+            <label className="grid gap-1.5 text-sm text-slate-700">
+              E-mail
+              <input
+                required
+                type="email"
+                value={authForm.email}
+                onChange={(event) =>
+                  setAuthForm((current) => ({
+                    ...current,
+                    email: event.target.value,
+                  }))
+                }
+                placeholder="vet@easyvet.local"
+                className="rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+              />
+            </label>
 
-    setStatusMessage('');
-    setErrorMessage('');
-    setIsRecordSaving(true);
+            <label className="grid gap-1.5 text-sm text-slate-700">
+              Senha
+              <input
+                required
+                type="password"
+                value={authForm.password}
+                onChange={(event) =>
+                  setAuthForm((current) => ({
+                    ...current,
+                    password: event.target.value,
+                  }))
+                }
+                placeholder="Sua senha"
+                className="rounded-md border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+              />
+            </label>
 
-    try {
-      const finalizePayload = {
-        chiefComplaint: recordForm.chiefComplaint,
-        symptomsOnset: recordForm.symptomsOnset,
-        clinicalHistory: recordForm.clinicalHistory,
-        physicalExam: recordForm.physicalExam,
-        presumptiveDiagnosis: recordForm.presumptiveDiagnosis,
-        conduct: recordForm.conduct,
-        guidance: recordForm.guidance,
-        recommendedReturnAt:
-          normalizeOptionalText(recordForm.recommendedReturnAt) ?? undefined,
-      };
+            <button
+              type="submit"
+              disabled={isAuthenticating}
+              className="mt-2 rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-65"
+            >
+              {isAuthenticating ? 'Entrando...' : 'Entrar'}
+            </button>
+          </form>
 
-      if (isDemoMode) {
-        const required = [
-          finalizePayload.chiefComplaint,
-          finalizePayload.symptomsOnset,
-          finalizePayload.clinicalHistory,
-          finalizePayload.physicalExam,
-          finalizePayload.presumptiveDiagnosis,
-          finalizePayload.conduct,
-          finalizePayload.guidance,
-        ];
+          {errorMessage && (
+            <p className="mt-4 text-sm text-rose-700" role="alert">
+              {errorMessage}
+            </p>
+          )}
 
-        const hasMissing = required.some((value) => value.trim().length === 0);
-        if (hasMissing) {
-          throw new Error(
-            'MEDICAL_RECORD_REQUIRED_FIELDS_MISSING: Preencha todos os campos obrigatorios para finalizar.',
-          );
-        }
+          {statusMessage && !errorMessage && (
+            <p className="mt-4 text-sm text-emerald-700">{statusMessage}</p>
+          )}
 
-        const existing = medicalRecords[selectedAppointmentId] ?? {
-          id: `demo-record-${Date.now()}`,
-          appointmentId: selectedAppointmentId,
-          status: 'DRAFT' as MedicalRecordStatus,
-          chiefComplaint: null,
-          symptomsOnset: null,
-          clinicalHistory: null,
-          physicalExam: null,
-          presumptiveDiagnosis: null,
-          conduct: null,
-          guidance: null,
-          recommendedReturnAt: null,
-          finalizedAt: null,
-        };
-
-        const finalized: MedicalRecord = {
-          ...existing,
-          status: 'FINALIZED',
-          chiefComplaint: finalizePayload.chiefComplaint,
-          symptomsOnset: finalizePayload.symptomsOnset,
-          clinicalHistory: finalizePayload.clinicalHistory,
-          physicalExam: finalizePayload.physicalExam,
-          presumptiveDiagnosis: finalizePayload.presumptiveDiagnosis,
-          conduct: finalizePayload.conduct,
-          guidance: finalizePayload.guidance,
-          recommendedReturnAt: finalizePayload.recommendedReturnAt ?? null,
-          finalizedAt: new Date().toISOString(),
-        };
-
-        setMedicalRecords((current) => ({
-          ...current,
-          [selectedAppointmentId]: finalized,
-        }));
-        setAppointments((current) =>
-          current.map((item) =>
-            item.id === selectedAppointmentId
-              ? { ...item, status: 'COMPLETED' }
-              : item,
-          ),
-        );
-        setStatusMessage('Prontuario finalizado (demonstracao).');
-        return;
-      }
-
-      const finalized = await request<MedicalRecord>(
-        `/appointments/${selectedAppointmentId}/medical-record/finalize`,
-        {
-          method: 'PUT',
-          body: JSON.stringify(finalizePayload),
-        },
-      );
-
-      setMedicalRecords((current) => ({
-        ...current,
-        [selectedAppointmentId]: finalized,
-      }));
-      setAppointments((current) =>
-        current.map((item) =>
-          item.id === selectedAppointmentId
-            ? { ...item, status: 'COMPLETED' }
-            : item,
-        ),
-      );
-      setStatusMessage('Prontuario finalizado com sucesso.');
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Falha ao finalizar prontuario.';
-      setErrorMessage(message);
-    } finally {
-      setIsRecordSaving(false);
-    }
+          <div className="mt-6 border-t border-slate-200 pt-4 text-xs text-slate-500">
+            <p>Credenciais de bootstrap: admin@easyvet.local / easyvet123</p>
+          </div>
+        </section>
+      </main>
+    );
   }
 
   return (
-    <main className="min-h-screen bg-[var(--color-bg)] text-[var(--color-ink)]">
-      <section className="border-b border-slate-200/90 bg-white/80 backdrop-blur-sm">
-        <div className="mx-auto w-full max-w-7xl px-4 py-8 md:px-8 md:py-10">
-          <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-teal-700 rise-in">
-            EasyVet Workspace
-          </p>
-          <div className="mt-2 grid gap-6 md:grid-cols-[1.4fr_1fr]">
-            <div className="rise-in [animation-delay:120ms]">
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-900 md:text-5xl">
-                Agenda Clinica e Prontuario
-              </h1>
-              {isDemoMode && (
-                <p className="mt-2 inline-flex items-center rounded-sm bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
-                  Modo demonstracao
-                </p>
-              )}
-              <div className="mt-3 grid max-w-2xl gap-3 border border-slate-200 bg-slate-50/70 p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <label
-                    htmlFor="active-role"
-                    className="text-xs uppercase tracking-[0.18em] text-slate-500"
-                  >
-                    Perfil ativo
-                  </label>
-                  <select
-                    id="active-role"
-                    value={activeRole}
-                    onChange={(event) =>
-                      setActiveRole(event.target.value as ActorRole)
-                    }
-                    disabled={Boolean(authUser)}
-                    className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-700 outline-none ring-2 ring-transparent transition focus:ring-teal-400 disabled:cursor-not-allowed disabled:bg-slate-100"
-                  >
-                    {ROLE_OPTIONS.map((role) => (
-                      <option key={role.value} value={role.value}>
-                        {role.label}
-                      </option>
-                    ))}
-                  </select>
-                  {authUser && (
-                    <span className="text-xs text-slate-500">
-                      Sincronizado com sessao autenticada.
+    <div className="min-h-screen lg:grid lg:grid-cols-[272px_1fr]">
+      <aside className="bg-[#10221d] text-slate-100">
+        <div className="flex min-h-screen flex-col px-6 py-7">
+          <div>
+            <p className="text-xs uppercase tracking-[0.22em] text-teal-200">EasyVet</p>
+            <h2 className="mt-2 text-2xl font-semibold">Painel Operacional</h2>
+            <p className="mt-2 text-sm text-teal-100/80">
+              Navegue por funcionalidades em paginas completas.
+            </p>
+          </div>
+
+          <nav className="mt-8 grid gap-2">
+            {SECTION_ITEMS.map((item, index) => {
+              const active = item.id === activeSection;
+
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActiveSection(item.id)}
+                  className={`text-left transition ${
+                    active
+                      ? 'bg-white/95 text-slate-900'
+                      : 'bg-transparent text-teal-100/90 hover:bg-white/10'
+                  }`}
+                >
+                  <span className="block border-l border-current/30 px-4 py-3">
+                    <span className="block text-[11px] uppercase tracking-[0.24em] opacity-70">
+                      {String(index + 1).padStart(2, '0')}
                     </span>
-                  )}
-                </div>
+                    <span className="mt-1 block text-sm font-medium">{item.label}</span>
+                    <span className="mt-0.5 block text-xs opacity-75">{item.description}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
 
-                {authUser ? (
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-sm text-slate-700">
-                      Conectado como <span className="font-medium">{authUser.name}</span>{' '}
-                      ({authUser.role})
-                    </p>
-                    <button
-                      type="button"
-                      onClick={onLogout}
-                      className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
-                    >
-                      Encerrar sessao
-                    </button>
-                  </div>
-                ) : (
-                  <form onSubmit={onLogin} className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
-                    <input
-                      type="email"
-                      required
-                      value={authForm.email}
-                      onChange={(event) =>
-                        setAuthForm((current) => ({
-                          ...current,
-                          email: event.target.value,
-                        }))
-                      }
-                      placeholder="E-mail de acesso"
-                      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
-                    />
-                    <input
-                      type="password"
-                      required
-                      value={authForm.password}
-                      onChange={(event) =>
-                        setAuthForm((current) => ({
-                          ...current,
-                          password: event.target.value,
-                        }))
-                      }
-                      placeholder="Senha"
-                      className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
-                    />
-                    <button
-                      type="submit"
-                      disabled={isAuthenticating}
-                      className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {isAuthenticating ? 'Entrando...' : 'Entrar'}
-                    </button>
-                  </form>
-                )}
-
-                {isDemoMode && (
-                  <p className="text-xs text-slate-500">
-                    Demo: use `admin@easyvet.local`, `vet@easyvet.local` ou
-                    `recepcao@easyvet.local` com senha `easyvet123`.
-                  </p>
-                )}
-              </div>
-              <p className="mt-3 max-w-2xl text-sm text-slate-600 md:text-base">
-                Workspace operacional para agendar consultas e registrar prontuarios
-                com finalizacao assistida por campos obrigatorios.
+          <div className="mt-auto border-t border-white/20 pt-5 text-sm">
+            <p className="font-medium">{authUser.name}</p>
+            <p className="mt-1 text-teal-100/85">{ROLE_LABEL[authUser.role]}</p>
+            {isDemoMode && (
+              <p className="mt-3 text-xs uppercase tracking-[0.2em] text-amber-200">
+                Modo demonstracao
               </p>
-              <p className="mt-2 text-sm text-slate-500">
-                {formatDateLabel(selectedDate)}
-              </p>
-            </div>
+            )}
 
-            <div className="grid grid-cols-2 gap-3 rise-in [animation-delay:220ms]">
-              <MetricBlock label="Consultas" value={String(metrics.total)} />
-              <MetricBlock label="Confirmadas" value={String(metrics.confirmed)} />
-              <MetricBlock
-                label="Em atendimento"
-                value={String(metrics.inProgress)}
-              />
-              <MetricBlock label="Concluidas" value={String(metrics.completed)} />
-            </div>
+            <button
+              type="button"
+              onClick={onLogout}
+              className="mt-5 w-full border border-white/30 px-3 py-2 text-xs font-semibold uppercase tracking-[0.2em] transition hover:bg-white/10"
+            >
+              Sair
+            </button>
           </div>
         </div>
-      </section>
+      </aside>
 
-      <section className="mx-auto grid w-full max-w-7xl gap-0 px-4 py-6 md:grid-cols-[1.62fr_1fr] md:px-8">
-        <section className="border border-slate-200 bg-white">
-          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-4 md:px-6">
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                Timeline do dia
+      <main className="min-h-screen bg-slate-50">
+        <header className="border-b border-slate-200 bg-white/85">
+          <div className="mx-auto w-full max-w-6xl px-6 py-6">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.22em] text-slate-500">
+                  {activeSectionMeta.label}
+                </p>
+                <h1 className="mt-2 text-2xl font-semibold text-slate-900">
+                  {activeSectionMeta.description}
+                </h1>
+              </div>
+
+              <label className="grid gap-1 text-xs uppercase tracking-[0.16em] text-slate-500">
+                Dia da operacao
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(event) => setSelectedDate(event.target.value)}
+                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                />
+              </label>
+            </div>
+
+            <p className="mt-3 text-sm text-slate-600">{formatDayLabel(selectedDate)}</p>
+
+            {statusMessage && (
+              <p className="mt-3 border-l-2 border-emerald-500 pl-3 text-sm text-emerald-700">
+                {statusMessage}
               </p>
-              <p className="text-sm text-slate-700">{formatDateLabel(selectedDate)}</p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(event) => setSelectedDate(event.target.value)}
-                className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
-              />
-              <button
-                type="button"
-                onClick={() => void loadAppointments(selectedDate)}
-                className="rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
-              >
-                Atualizar
-              </button>
-            </div>
-          </header>
-
-          {(statusMessage || errorMessage) && (
-            <div
-              className={`border-b px-4 py-3 text-sm md:px-6 ${
-                errorMessage
-                  ? 'border-rose-200 bg-rose-50 text-rose-700'
-                  : 'border-emerald-200 bg-emerald-50 text-emerald-700'
-              }`}
-            >
-              {errorMessage || statusMessage}
-            </div>
-          )}
-
-          <div className="divide-y divide-slate-200">
-            {isLoading ? (
-              <p className="px-6 py-8 text-sm text-slate-500">Carregando agenda...</p>
-            ) : appointments.length === 0 ? (
-              <p className="px-6 py-8 text-sm text-slate-500">
-                Nenhuma consulta para esta data.
+            )}
+            {errorMessage && (
+              <p className="mt-3 border-l-2 border-rose-500 pl-3 text-sm text-rose-700">
+                {errorMessage}
               </p>
-            ) : (
-              appointments.map((item, index) => {
-                const visual = STATUS_VISUAL[item.status];
-                const hasRecord = Boolean(medicalRecords[item.id]);
-
-                return (
-                  <article
-                    key={item.id}
-                    className="agenda-row px-4 py-4 md:px-6"
-                    style={{ animationDelay: `${index * 45}ms` }}
-                  >
-                    <div className="grid gap-3 md:grid-cols-[120px_1fr_auto] md:items-center">
-                      <div>
-                        <p className="text-xl font-semibold text-slate-900">
-                          {formatTime(item.startsAt)}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          ate {formatTime(item.endsAt)}
-                        </p>
-                      </div>
-
-                      <div className="min-w-0 border-l border-slate-200 pl-4">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className={`h-2.5 w-2.5 rounded-full ${visual.stripe}`} />
-                          <p className="truncate text-base font-medium text-slate-900">
-                            {item.patient.name}
-                          </p>
-                          <span className={`text-xs font-medium ${visual.text}`}>
-                            {visual.label}
-                          </span>
-                          {hasRecord && (
-                            <span className="rounded-sm bg-slate-100 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-slate-600">
-                              Prontuario
-                            </span>
-                          )}
-                        </div>
-                        <p className="mt-1 text-sm text-slate-700">
-                          {item.patient.species}
-                          {item.patient.breed ? ` - ${item.patient.breed}` : ''} - Tutor:{' '}
-                          {item.tutor.name}
-                        </p>
-                        <p className="mt-1 text-sm text-slate-500">
-                          Vet: {item.veterinarianName} - Motivo: {item.reason}
-                        </p>
-                      </div>
-
-                      <div className="flex flex-wrap justify-end gap-2">
-                        <StatusButton
-                          title="Confirmar"
-                          onClick={() => onChangeStatus(item.id, 'CONFIRMED')}
-                        />
-                        <StatusButton
-                          title="Iniciar"
-                          onClick={() => onChangeStatus(item.id, 'IN_PROGRESS')}
-                        />
-                        <StatusButton
-                          title="Concluir"
-                          onClick={() => onChangeStatus(item.id, 'COMPLETED')}
-                        />
-                        <StatusButton
-                          title="Prontuario"
-                          highlight
-                          onClick={() => {
-                            void openMedicalRecord(item);
-                          }}
-                        />
-                        <StatusButton
-                          title="Cancelar"
-                          danger
-                          onClick={() => onChangeStatus(item.id, 'CANCELED')}
-                        />
-                      </div>
-                    </div>
-                  </article>
-                );
-              })
             )}
           </div>
-        </section>
+        </header>
 
-        <aside className="border-x border-b border-slate-200 bg-white md:border-l-0 md:border-t">
-          <div className="grid grid-cols-3 border-b border-slate-200">
-            <button
-              type="button"
-              onClick={() => setSideMode('schedule')}
-              className={`px-4 py-3 text-left text-xs uppercase tracking-[0.18em] transition md:px-6 ${
-                sideMode === 'schedule'
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-white text-slate-500 hover:bg-slate-50'
-              }`}
-            >
-              Agendamento
-            </button>
-            <button
-              type="button"
-              onClick={() => setSideMode('record')}
-              className={`px-4 py-3 text-left text-xs uppercase tracking-[0.18em] transition md:px-6 ${
-                sideMode === 'record'
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-white text-slate-500 hover:bg-slate-50'
-              }`}
-            >
-              Prontuario
-            </button>
-            <button
-              type="button"
-              onClick={() => setSideMode('profiles')}
-              className={`px-4 py-3 text-left text-xs uppercase tracking-[0.18em] transition md:px-6 ${
-                sideMode === 'profiles'
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-white text-slate-500 hover:bg-slate-50'
-              }`}
-            >
-              Perfis
-            </button>
-          </div>
+        <div className="px-4 py-6 sm:px-6 lg:px-8">
+          {isWorkspaceLoading ? (
+            <section className="rise-in mx-auto w-full max-w-6xl border border-slate-200 bg-white px-6 py-10 text-sm text-slate-600">
+              Carregando dados do workspace...
+            </section>
+          ) : activeSection === 'consultations' ? (
+            <section className="rise-in mx-auto w-full max-w-6xl">
+              <div className="grid gap-4 border border-slate-200 bg-white px-4 py-4 sm:grid-cols-2 xl:grid-cols-4">
+                <MetricLine label="Consultas do dia" value={String(appointmentMetrics.total)} />
+                <MetricLine
+                  label="Pendentes"
+                  value={String(appointmentMetrics.pending)}
+                />
+                <MetricLine
+                  label="Em atendimento"
+                  value={String(appointmentMetrics.inProgress)}
+                />
+                <MetricLine
+                  label="Concluidas"
+                  value={String(appointmentMetrics.finished)}
+                />
+              </div>
 
-          {sideMode === 'schedule' ? (
-            <>
-              <div className="border-b border-slate-200 px-4 py-4 md:px-6">
+              <div className="mt-5 overflow-hidden border border-slate-200 bg-white">
+                <div className="grid grid-cols-[90px_1fr_1fr_1fr_auto] gap-3 border-b border-slate-200 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  <span>Horario</span>
+                  <span>Paciente</span>
+                  <span>Tutor</span>
+                  <span>Veterinario</span>
+                  <span className="text-right">Acoes</span>
+                </div>
+
+                {sortedAppointments.length === 0 ? (
+                  <p className="px-4 py-10 text-sm text-slate-600">
+                    Nao ha consultas para a data selecionada.
+                  </p>
+                ) : (
+                  <ul className="divide-y divide-slate-200">
+                    {sortedAppointments.map((appointment, index) => (
+                      <li
+                        key={appointment.id}
+                        className="agenda-row"
+                        style={{ animationDelay: `${index * 45}ms` }}
+                      >
+                        <div className="grid grid-cols-[90px_1fr_1fr_1fr_auto] items-center gap-3 px-4 py-3 text-sm">
+                          <div>
+                            <p className="font-medium text-slate-900">
+                              {formatTime(appointment.startsAt)}
+                            </p>
+                            <p className="text-xs text-slate-500">{appointment.reason}</p>
+                          </div>
+
+                          <div>
+                            <p className="font-medium text-slate-900">
+                              {appointment.patient.name}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {appointment.patient.species}
+                              {appointment.patient.breed
+                                ? ` - ${appointment.patient.breed}`
+                                : ''}
+                            </p>
+                          </div>
+
+                          <div>
+                            <p className="font-medium text-slate-800">
+                              {appointment.tutor.name}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {appointment.tutor.phone || 'Sem telefone'}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <StatusBadge status={appointment.status} />
+                            <span className="text-slate-700">
+                              {appointment.veterinarianName}
+                            </span>
+                          </div>
+
+                          <div className="flex justify-end gap-1.5">
+                            <TinyActionButton
+                              title="Confirmar"
+                              onClick={() =>
+                                void onChangeAppointmentStatus(
+                                  appointment.id,
+                                  'CONFIRMED',
+                                )
+                              }
+                              disabled={appointment.status === 'COMPLETED'}
+                            />
+                            <TinyActionButton
+                              title="Atender"
+                              onClick={() =>
+                                void onChangeAppointmentStatus(
+                                  appointment.id,
+                                  'IN_PROGRESS',
+                                )
+                              }
+                              disabled={appointment.status === 'COMPLETED'}
+                            />
+                            <TinyActionButton
+                              title="Concluir"
+                              onClick={() =>
+                                void onChangeAppointmentStatus(
+                                  appointment.id,
+                                  'COMPLETED',
+                                )
+                              }
+                              highlight
+                              disabled={appointment.status === 'COMPLETED'}
+                            />
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </section>
+          ) : activeSection === 'scheduling' ? (
+            <section className="rise-in mx-auto grid w-full max-w-6xl gap-6 xl:grid-cols-[420px_1fr]">
+              <form className="border border-slate-200 bg-white px-5 py-5" onSubmit={onCreateAppointment}>
                 <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
                   Novo agendamento
                 </p>
-                <p className="mt-1 text-sm text-slate-700">
-                  Preencha os campos e registre a consulta do dia.
-                </p>
-              </div>
+                <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                  Preencha os dados da consulta
+                </h3>
 
-              <form className="grid gap-3 px-4 py-4 md:px-6" onSubmit={onCreateAppointment}>
-                <select
-                  required
-                  value={appointmentForm.patientId}
-                  onChange={(event) =>
-                    setAppointmentForm((current) => ({
-                      ...current,
-                      patientId: event.target.value,
-                    }))
-                  }
-                  className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
-                >
-                  <option value="">Selecione o paciente</option>
-                  {patients.map((patient) => {
-                    const tutor = tutors.find((item) => item.id === patient.tutorId);
-                    return (
-                      <option key={patient.id} value={patient.id}>
-                        {patient.name} ({tutor?.name ?? 'Tutor'})
-                      </option>
-                    );
-                  })}
-                </select>
+                <div className="mt-5 grid gap-4">
+                  <label className="grid gap-1.5 text-sm text-slate-700">
+                    Paciente
+                    <select
+                      required
+                      value={appointmentForm.patientId}
+                      onChange={(event) =>
+                        setAppointmentForm((current) => ({
+                          ...current,
+                          patientId: event.target.value,
+                        }))
+                      }
+                      className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                    >
+                      <option value="">Selecione um paciente</option>
+                      {patientOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-                <input
-                  required
-                  value={appointmentForm.veterinarianName}
-                  onChange={(event) =>
-                    setAppointmentForm((current) => ({
-                      ...current,
-                      veterinarianName: event.target.value,
-                    }))
-                  }
-                  placeholder="Veterinario responsavel"
-                  className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
-                />
+                  <label className="grid gap-1.5 text-sm text-slate-700">
+                    Veterinario responsavel
+                    <input
+                      required
+                      value={appointmentForm.veterinarianName}
+                      onChange={(event) =>
+                        setAppointmentForm((current) => ({
+                          ...current,
+                          veterinarianName: event.target.value,
+                        }))
+                      }
+                      placeholder="Nome do veterinario"
+                      className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                    />
+                  </label>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="time"
-                    required
-                    value={appointmentForm.startsAt}
-                    onChange={(event) =>
-                      setAppointmentForm((current) => ({
-                        ...current,
-                        startsAt: event.target.value,
-                      }))
-                    }
-                    className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
-                  />
-                  <input
-                    type="time"
-                    required
-                    value={appointmentForm.endsAt}
-                    onChange={(event) =>
-                      setAppointmentForm((current) => ({
-                        ...current,
-                        endsAt: event.target.value,
-                      }))
-                    }
-                    className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
-                  />
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="grid gap-1.5 text-sm text-slate-700">
+                      Inicio
+                      <input
+                        required
+                        type="time"
+                        value={appointmentForm.startsAt}
+                        onChange={(event) =>
+                          setAppointmentForm((current) => ({
+                            ...current,
+                            startsAt: event.target.value,
+                          }))
+                        }
+                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                      />
+                    </label>
+
+                    <label className="grid gap-1.5 text-sm text-slate-700">
+                      Fim
+                      <input
+                        required
+                        type="time"
+                        value={appointmentForm.endsAt}
+                        onChange={(event) =>
+                          setAppointmentForm((current) => ({
+                            ...current,
+                            endsAt: event.target.value,
+                          }))
+                        }
+                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="grid gap-1.5 text-sm text-slate-700">
+                    Motivo da consulta
+                    <input
+                      required
+                      value={appointmentForm.reason}
+                      onChange={(event) =>
+                        setAppointmentForm((current) => ({
+                          ...current,
+                          reason: event.target.value,
+                        }))
+                      }
+                      placeholder="Ex.: retorno, vacina, avaliacao"
+                      className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                    />
+                  </label>
+
+                  <button
+                    type="submit"
+                    disabled={isAppointmentSaving || patients.length === 0}
+                    className="mt-1 rounded-md bg-teal-700 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-65"
+                  >
+                    {isAppointmentSaving ? 'Salvando...' : 'Agendar consulta'}
+                  </button>
                 </div>
-
-                <input
-                  required
-                  value={appointmentForm.reason}
-                  onChange={(event) =>
-                    setAppointmentForm((current) => ({
-                      ...current,
-                      reason: event.target.value,
-                    }))
-                  }
-                  placeholder="Motivo da consulta"
-                  className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
-                />
-
-                <button
-                  type="submit"
-                  className="mt-2 rounded-md bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800"
-                  disabled={patients.length === 0}
-                >
-                  Agendar consulta
-                </button>
-
-                {patients.length === 0 && (
-                  <p className="text-xs text-slate-500">
-                    Cadastre pacientes para habilitar o agendamento.
-                  </p>
-                )}
               </form>
 
-              <div className="border-t border-slate-200 px-4 py-4 md:px-6">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                  Resumo rapido
-                </p>
-                <dl className="mt-3 grid grid-cols-2 gap-y-2 text-sm">
-                  <dt className="text-slate-500">Tutores</dt>
-                  <dd className="text-right font-medium text-slate-900">{tutors.length}</dd>
-                  <dt className="text-slate-500">Pacientes</dt>
-                  <dd className="text-right font-medium text-slate-900">{patients.length}</dd>
-                  <dt className="text-slate-500">Ativas</dt>
-                  <dd className="text-right font-medium text-slate-900">
-                    {activeAppointments.length}
-                  </dd>
-                </dl>
-              </div>
-            </>
-          ) : sideMode === 'record' ? (
-            <>
-              <div className="border-b border-slate-200 px-4 py-4 md:px-6">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                  Prontuario clinico
-                </p>
-                {!selectedAppointment ? (
-                  <p className="mt-1 text-sm text-slate-700">
-                    Selecione o botao Prontuario em uma consulta da timeline para iniciar.
+              <div className="border border-slate-200 bg-white">
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                    Planejamento do dia
+                  </p>
+                  <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                    Timeline de atendimentos
+                  </h3>
+                </div>
+
+                {sortedAppointments.length === 0 ? (
+                  <p className="px-5 py-10 text-sm text-slate-600">
+                    Sem consultas registradas para este dia.
                   </p>
                 ) : (
-                  <div className="mt-2 text-sm text-slate-700">
-                    <p className="font-medium text-slate-900">
-                      {selectedAppointment.patient.name}
-                    </p>
-                    <p>
-                      Vet: {selectedAppointment.veterinarianName} -{' '}
-                      {formatTime(selectedAppointment.startsAt)}
-                    </p>
-                    {selectedRecord?.status === 'FINALIZED' &&
-                      selectedRecord.finalizedAt && (
-                        <p className="mt-1 text-emerald-700">
-                          Finalizado em {formatDateTime(selectedRecord.finalizedAt)}
-                        </p>
-                      )}
-                  </div>
+                  <ul className="divide-y divide-slate-200">
+                    {sortedAppointments.map((appointment) => (
+                      <li key={appointment.id} className="px-5 py-3 text-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="font-medium text-slate-900">
+                              {formatTime(appointment.startsAt)} - {formatTime(appointment.endsAt)}
+                            </p>
+                            <p className="text-slate-700">
+                              {appointment.patient.name} | {appointment.reason}
+                            </p>
+                          </div>
+
+                          <StatusBadge status={appointment.status} />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
                 )}
               </div>
-
-              <div className="grid gap-3 px-4 py-4 md:px-6">
-                <RecordField
-                  label="Queixa principal"
-                  value={recordForm.chiefComplaint}
-                  onChange={(value) =>
-                    setRecordForm((current) => ({ ...current, chiefComplaint: value }))
-                  }
-                  disabled={!selectedAppointment}
-                  required
-                />
-
-                <RecordField
-                  label="Inicio dos sintomas"
-                  value={recordForm.symptomsOnset}
-                  onChange={(value) =>
-                    setRecordForm((current) => ({ ...current, symptomsOnset: value }))
-                  }
-                  disabled={!selectedAppointment}
-                  required
-                />
-
-                <RecordArea
-                  label="Historico clinico"
-                  value={recordForm.clinicalHistory}
-                  onChange={(value) =>
-                    setRecordForm((current) => ({ ...current, clinicalHistory: value }))
-                  }
-                  disabled={!selectedAppointment}
-                  required
-                />
-
-                <RecordArea
-                  label="Exame fisico"
-                  value={recordForm.physicalExam}
-                  onChange={(value) =>
-                    setRecordForm((current) => ({ ...current, physicalExam: value }))
-                  }
-                  disabled={!selectedAppointment}
-                  required
-                />
-
-                <RecordField
-                  label="Diagnostico presuntivo"
-                  value={recordForm.presumptiveDiagnosis}
-                  onChange={(value) =>
-                    setRecordForm((current) => ({
-                      ...current,
-                      presumptiveDiagnosis: value,
-                    }))
-                  }
-                  disabled={!selectedAppointment}
-                  required
-                />
-
-                <RecordArea
-                  label="Conduta"
-                  value={recordForm.conduct}
-                  onChange={(value) =>
-                    setRecordForm((current) => ({ ...current, conduct: value }))
-                  }
-                  disabled={!selectedAppointment}
-                  required
-                />
-
-                <RecordArea
-                  label="Orientacoes ao tutor"
-                  value={recordForm.guidance}
-                  onChange={(value) =>
-                    setRecordForm((current) => ({ ...current, guidance: value }))
-                  }
-                  disabled={!selectedAppointment}
-                  required
-                />
-
-                <RecordField
-                  label="Retorno recomendado"
-                  type="date"
-                  value={recordForm.recommendedReturnAt}
-                  onChange={(value) =>
-                    setRecordForm((current) => ({
-                      ...current,
-                      recommendedReturnAt: value,
-                    }))
-                  }
-                  disabled={!selectedAppointment}
-                />
-
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => void onSaveRecordDraft()}
-                    disabled={!selectedAppointment || isRecordSaving}
-                    className="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Salvar rascunho
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void onFinalizeRecord()}
-                    disabled={
-                      !selectedAppointment || isRecordSaving || !canFinalizeRecord
-                    }
-                    className="rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Finalizar prontuario
-                  </button>
-                </div>
-                {!canFinalizeRecord && (
-                  <p className="text-xs text-amber-700">
-                    Perfil de recepcao possui acesso somente de leitura no fluxo
-                    de finalizacao.
-                  </p>
-                )}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="border-b border-slate-200 px-4 py-4 md:px-6">
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                  Gestao de perfis
-                </p>
-                {!authUser ? (
-                  <p className="mt-1 text-sm text-slate-700">
-                    Realize login para acessar a administracao de perfis.
-                  </p>
-                ) : !canManageProfiles ? (
-                  <p className="mt-1 text-sm text-amber-700">
-                    Acesso restrito: somente administradores podem gerenciar perfis.
-                  </p>
-                ) : (
-                  <p className="mt-1 text-sm text-slate-700">
-                    Crie usuarios operacionais e ajuste o papel de acesso da equipe.
-                  </p>
-                )}
-              </div>
-
-              {!authUser ? (
-                <div className="px-4 py-5 text-sm text-slate-500 md:px-6">
-                  Use o bloco de acesso no topo da pagina para iniciar sessao.
-                </div>
-              ) : !canManageProfiles ? (
-                <div className="px-4 py-5 text-sm text-amber-700 md:px-6">
-                  Seu perfil atual e <span className="font-medium">{activeRole}</span>.
-                  Solicite permissao de administrador para continuar.
+            </section>
+          ) : activeSection === 'users' ? (
+            <section className="rise-in mx-auto w-full max-w-6xl">
+              {!canManageUsers ? (
+                <div className="border border-amber-200 bg-amber-50 px-6 py-6 text-sm text-amber-800">
+                  Seu perfil atual nao possui permissao para cadastrar ou editar usuarios.
                 </div>
               ) : (
-                <>
-                  <form
-                    className="grid gap-3 border-b border-slate-200 px-4 py-4 md:px-6"
-                    onSubmit={onCreateProfile}
-                  >
-                    <input
-                      required
-                      value={profileForm.name}
-                      onChange={(event) =>
-                        setProfileForm((current) => ({
-                          ...current,
-                          name: event.target.value,
-                        }))
-                      }
-                      placeholder="Nome completo"
-                      className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
-                    />
-                    <input
-                      type="email"
-                      required
-                      value={profileForm.email}
-                      onChange={(event) =>
-                        setProfileForm((current) => ({
-                          ...current,
-                          email: event.target.value,
-                        }))
-                      }
-                      placeholder="E-mail profissional"
-                      className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
-                    />
-                    <div className="grid grid-cols-2 gap-2">
-                      <select
-                        value={profileForm.role}
-                        onChange={(event) =>
-                          setProfileForm((current) => ({
-                            ...current,
-                            role: event.target.value as ActorRole,
-                          }))
-                        }
-                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
+                <div className="grid gap-6 xl:grid-cols-[390px_1fr]">
+                  <form className="border border-slate-200 bg-white px-5 py-5" onSubmit={onCreateProfile}>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                      Cadastro de usuario
+                    </p>
+                    <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                      Criar novo perfil
+                    </h3>
+
+                    <div className="mt-5 grid gap-4">
+                      <label className="grid gap-1.5 text-sm text-slate-700">
+                        Nome completo
+                        <input
+                          required
+                          value={profileForm.name}
+                          onChange={(event) =>
+                            setProfileForm((current) => ({
+                              ...current,
+                              name: event.target.value,
+                            }))
+                          }
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                        />
+                      </label>
+
+                      <label className="grid gap-1.5 text-sm text-slate-700">
+                        E-mail
+                        <input
+                          required
+                          type="email"
+                          value={profileForm.email}
+                          onChange={(event) =>
+                            setProfileForm((current) => ({
+                              ...current,
+                              email: event.target.value,
+                            }))
+                          }
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                        />
+                      </label>
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="grid gap-1.5 text-sm text-slate-700">
+                          Papel
+                          <select
+                            value={profileForm.role}
+                            onChange={(event) =>
+                              setProfileForm((current) => ({
+                                ...current,
+                                role: event.target.value as ActorRole,
+                              }))
+                            }
+                            className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                          >
+                            <option value="ADMIN">Administrador</option>
+                            <option value="VETERINARIAN">Veterinario</option>
+                            <option value="RECEPTION">Recepcao</option>
+                          </select>
+                        </label>
+
+                        <label className="grid gap-1.5 text-sm text-slate-700">
+                          Senha inicial
+                          <input
+                            required
+                            type="password"
+                            value={profileForm.password}
+                            onChange={(event) =>
+                              setProfileForm((current) => ({
+                                ...current,
+                                password: event.target.value,
+                              }))
+                            }
+                            className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                          />
+                        </label>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={isProfileSaving}
+                        className="mt-1 rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-65"
                       >
-                        {ROLE_OPTIONS.map((role) => (
-                          <option key={role.value} value={role.value}>
-                            {role.label}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="password"
-                        required
-                        value={profileForm.password}
-                        onChange={(event) =>
-                          setProfileForm((current) => ({
-                            ...current,
-                            password: event.target.value,
-                          }))
-                        }
-                        placeholder="Senha inicial"
-                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400"
-                      />
+                        {isProfileSaving ? 'Salvando...' : 'Criar usuario'}
+                      </button>
                     </div>
-                    <button
-                      type="submit"
-                      disabled={isProfileSaving}
-                      className="rounded-md bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {isProfileSaving ? 'Salvando...' : 'Criar perfil'}
-                    </button>
                   </form>
 
-                  <div className="border-b border-slate-200 px-4 py-3 md:px-6">
-                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
-                      Equipe cadastrada
-                    </p>
-                  </div>
-
-                  <div className="max-h-[360px] overflow-auto">
-                    {isProfilesLoading ? (
-                      <p className="px-4 py-6 text-sm text-slate-500 md:px-6">
-                        Carregando perfis...
+                  <div className="border border-slate-200 bg-white">
+                    <div className="border-b border-slate-200 px-5 py-4">
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                        Usuarios da operacao
                       </p>
-                    ) : profiles.length === 0 ? (
-                      <p className="px-4 py-6 text-sm text-slate-500 md:px-6">
-                        Nenhum perfil cadastrado.
+                      <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                        Perfis ativos
+                      </h3>
+                    </div>
+
+                    {profiles.length === 0 ? (
+                      <p className="px-5 py-10 text-sm text-slate-600">
+                        Nenhum perfil disponivel.
                       </p>
                     ) : (
                       <ul className="divide-y divide-slate-200">
-                        {profiles.map((profile) => (
+                        {sortProfiles(profiles).map((profile) => (
                           <li
                             key={profile.id}
-                            className="grid gap-2 px-4 py-3 md:grid-cols-[1fr_auto] md:px-6"
+                            className="grid gap-3 px-5 py-3 md:grid-cols-[1fr_auto]"
                           >
                             <div>
                               <p className="text-sm font-medium text-slate-900">
@@ -1848,6 +1538,7 @@ export default function Home() {
                               </p>
                               <p className="text-xs text-slate-500">{profile.email}</p>
                             </div>
+
                             <div className="grid gap-1 text-right">
                               <select
                                 value={profile.role}
@@ -1857,13 +1548,11 @@ export default function Home() {
                                     event.target.value as ActorRole,
                                   )
                                 }
-                                className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs outline-none ring-2 ring-transparent transition focus:ring-teal-400"
+                                className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
                               >
-                                {ROLE_OPTIONS.map((role) => (
-                                  <option key={role.value} value={role.value}>
-                                    {role.label}
-                                  </option>
-                                ))}
+                                <option value="ADMIN">Administrador</option>
+                                <option value="VETERINARIAN">Veterinario</option>
+                                <option value="RECEPTION">Recepcao</option>
                               </select>
                               <p className="text-[11px] text-slate-500">
                                 Atualizado em {formatDateTime(profile.updatedAt)}
@@ -1874,111 +1563,126 @@ export default function Home() {
                       </ul>
                     )}
                   </div>
-                </>
+                </div>
               )}
-            </>
+            </section>
+          ) : activeSection === 'patients' ? (
+            <section className="rise-in mx-auto w-full max-w-6xl border border-slate-200 bg-white">
+              <div className="border-b border-slate-200 px-5 py-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                  Base clinica
+                </p>
+                <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                  Pacientes e tutores
+                </h3>
+              </div>
+
+              {patients.length === 0 ? (
+                <p className="px-5 py-10 text-sm text-slate-600">
+                  Nenhum paciente encontrado na base atual.
+                </p>
+              ) : (
+                <ul className="divide-y divide-slate-200">
+                  {patients.map((patient) => {
+                    const tutor = tutors.find((item) => item.id === patient.tutorId);
+
+                    return (
+                      <li
+                        key={patient.id}
+                        className="grid gap-2 px-5 py-3 md:grid-cols-[1fr_1fr_auto]"
+                      >
+                        <div>
+                          <p className="text-sm font-medium text-slate-900">{patient.name}</p>
+                          <p className="text-xs text-slate-500">
+                            {patient.species}
+                            {patient.breed ? ` - ${patient.breed}` : ''}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-slate-800">{tutor?.name ?? 'Tutor nao encontrado'}</p>
+                          <p className="text-xs text-slate-500">{tutor?.phone || 'Sem telefone'}</p>
+                        </div>
+                        <p className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                          {patient.id.slice(0, 8)}
+                        </p>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </section>
+          ) : (
+            <section className="rise-in mx-auto w-full max-w-6xl border border-slate-200 bg-white px-6 py-8">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                Configuracoes
+              </p>
+              <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                Proximas entregas desta area
+              </h3>
+              <ul className="mt-5 space-y-3 text-sm text-slate-700">
+                <li>Padroes de notificacao para equipe clinica.</li>
+                <li>Preferencias de impressao de receituarios e anexos.</li>
+                <li>Regras de horarios e duracao padrao para atendimento.</li>
+              </ul>
+            </section>
           )}
-        </aside>
-      </section>
-    </main>
+        </div>
+      </main>
+    </div>
   );
 }
 
-function MetricBlock({ label, value }: { label: string; value: string }) {
+function sortProfiles(data: AccessProfile[]): AccessProfile[] {
+  return [...data].sort((first, second) => {
+    return first.name.localeCompare(second.name);
+  });
+}
+
+function MetricLine({ label, value }: { label: string; value: string }) {
   return (
-    <div className="border border-slate-200 bg-white p-3">
-      <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{label}</p>
+    <div className="border-b border-slate-200 pb-2 last:border-b-0 sm:border-b-0 sm:border-r sm:pb-0 sm:last:border-r-0">
+      <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-slate-900">{value}</p>
     </div>
   );
 }
 
-function StatusButton({
+function StatusBadge({ status }: { status: AppointmentStatus }) {
+  const visual = STATUS_VISUAL[status];
+
+  return (
+    <span
+      className={`inline-flex items-center gap-2 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium ${visual.textClass}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${visual.dotClass}`} />
+      {visual.label}
+    </span>
+  );
+}
+
+function TinyActionButton({
   title,
   onClick,
-  danger = false,
   highlight = false,
+  disabled = false,
 }: {
   title: string;
   onClick: () => void;
-  danger?: boolean;
   highlight?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-md border px-2.5 py-1 text-xs font-medium transition ${
-        danger
-          ? 'border-rose-200 text-rose-700 hover:bg-rose-50'
-          : highlight
-            ? 'border-teal-300 text-teal-700 hover:bg-teal-50'
-            : 'border-slate-300 text-slate-700 hover:bg-slate-100'
-      }`}
+      disabled={disabled}
+      className={`rounded-md border px-2 py-1 text-xs transition ${
+        highlight
+          ? 'border-teal-600 text-teal-700 hover:bg-teal-50'
+          : 'border-slate-300 text-slate-700 hover:bg-slate-100'
+      } disabled:cursor-not-allowed disabled:opacity-50`}
     >
       {title}
     </button>
-  );
-}
-
-function RecordField({
-  label,
-  value,
-  onChange,
-  disabled,
-  required = false,
-  type = 'text',
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  disabled: boolean;
-  required?: boolean;
-  type?: 'text' | 'date';
-}) {
-  return (
-    <label className="grid gap-1 text-sm text-slate-700">
-      <span>
-        {label}
-        {required && <span className="ml-1 text-rose-600">*</span>}
-      </span>
-      <input
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        disabled={disabled}
-        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400 disabled:cursor-not-allowed disabled:bg-slate-100"
-      />
-    </label>
-  );
-}
-
-function RecordArea({
-  label,
-  value,
-  onChange,
-  disabled,
-  required = false,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  disabled: boolean;
-  required?: boolean;
-}) {
-  return (
-    <label className="grid gap-1 text-sm text-slate-700">
-      <span>
-        {label}
-        {required && <span className="ml-1 text-rose-600">*</span>}
-      </span>
-      <textarea
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        disabled={disabled}
-        rows={3}
-        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:ring-teal-400 disabled:cursor-not-allowed disabled:bg-slate-100"
-      />
-    </label>
   );
 }
