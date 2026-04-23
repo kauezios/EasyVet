@@ -469,6 +469,31 @@ function sortAppointments(data: Appointment[]): Appointment[] {
   });
 }
 
+function sortAppointmentsDescending(data: Appointment[]): Appointment[] {
+  return [...data].sort((first, second) => {
+    return new Date(second.startsAt).getTime() - new Date(first.startsAt).getTime();
+  });
+}
+
+function mergeUniqueAppointments(
+  base: Appointment[],
+  groupedByDate: Record<string, Appointment[]>,
+): Appointment[] {
+  const map = new Map<string, Appointment>();
+
+  base.forEach((appointment) => {
+    map.set(appointment.id, appointment);
+  });
+
+  Object.values(groupedByDate).forEach((dayAppointments) => {
+    dayAppointments.forEach((appointment) => {
+      map.set(appointment.id, appointment);
+    });
+  });
+
+  return sortAppointments(Array.from(map.values()));
+}
+
 function createEmptyMedicalRecordFormState(): MedicalRecordFormState {
   return {
     chiefComplaint: '',
@@ -850,6 +875,10 @@ export default function Home() {
   const [medicalRecordForm, setMedicalRecordForm] = useState<MedicalRecordFormState>(
     createEmptyMedicalRecordFormState(),
   );
+  const [patientHistoryAppointments, setPatientHistoryAppointments] = useState<
+    Appointment[]
+  >([]);
+  const [patientHistorySearch, setPatientHistorySearch] = useState('');
 
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const [isProfileSaving, setIsProfileSaving] = useState(false);
@@ -860,6 +889,7 @@ export default function Home() {
   const [isMedicalRecordLoading, setIsMedicalRecordLoading] = useState(false);
   const [isMedicalRecordSaving, setIsMedicalRecordSaving] = useState(false);
   const [isMedicalRecordFinalizing, setIsMedicalRecordFinalizing] = useState(false);
+  const [isPatientHistoryLoading, setIsPatientHistoryLoading] = useState(false);
 
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -1024,6 +1054,28 @@ export default function Home() {
 
     return canFinalizeMedicalRecord(medicalRecordForm);
   }, [medicalRecordForm, selectedConsultationIsFinalizedRecord]);
+
+  const filteredPatientHistory = useMemo(() => {
+    const search = patientHistorySearch.trim().toLowerCase();
+    const history = sortAppointmentsDescending(patientHistoryAppointments);
+
+    if (!search) {
+      return history;
+    }
+
+    return history.filter((appointment) => {
+      const searchable = [
+        appointment.reason,
+        appointment.veterinarianName,
+        appointment.patient.name,
+        appointment.tutor.name,
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      return searchable.includes(search);
+    });
+  }, [patientHistoryAppointments, patientHistorySearch]);
 
   const appointmentMetrics = useMemo(() => {
     const total = appointments.length;
@@ -1283,6 +1335,21 @@ export default function Home() {
 
         return next;
       });
+
+      setPatientHistoryAppointments((current) =>
+        sortAppointments(
+          current.map((item) => {
+            if (item.id !== appointmentId) {
+              return item;
+            }
+
+            return {
+              ...item,
+              status,
+            };
+          }),
+        ),
+      );
     },
     [],
   );
@@ -1330,6 +1397,46 @@ export default function Home() {
     [demoMedicalRecordsByAppointment, isDemoMode, request],
   );
 
+  const loadPatientHistory = useCallback(
+    async (patientId: string) => {
+      if (!patientId) {
+        setPatientHistoryAppointments([]);
+        return;
+      }
+
+      setIsPatientHistoryLoading(true);
+
+      try {
+        if (isDemoMode) {
+          const knownAppointments = mergeUniqueAppointments(
+            appointments,
+            appointmentsByDate,
+          );
+          const history = knownAppointments.filter(
+            (appointment) => appointment.patientId === patientId,
+          );
+          setPatientHistoryAppointments(sortAppointments(history));
+          return;
+        }
+
+        const history = await request<Appointment[]>(
+          `/appointments?patientId=${encodeURIComponent(patientId)}`,
+        );
+        setPatientHistoryAppointments(sortAppointments(history));
+      } catch (error) {
+        setErrorMessage(
+          normalizeErrorMessage(
+            error,
+            'Falha ao carregar historico de consultas do paciente.',
+          ),
+        );
+      } finally {
+        setIsPatientHistoryLoading(false);
+      }
+    },
+    [appointments, appointmentsByDate, isDemoMode, request],
+  );
+
   const bootstrapWorkspace = useCallback(async () => {
     if (!authUser) {
       return;
@@ -1362,6 +1469,8 @@ export default function Home() {
       setDemoMedicalRecordsByAppointment({});
       setSelectedMedicalRecord(null);
       setMedicalRecordForm(createEmptyMedicalRecordFormState());
+      setPatientHistoryAppointments([]);
+      setPatientHistorySearch('');
       setClinicSettings(scheduleData);
       setSavedClinicSettings(scheduleData);
       setAppointmentsByDate((current) => ({
@@ -1392,6 +1501,8 @@ export default function Home() {
       setDemoMedicalRecordsByAppointment(demoDataset.medicalRecordsByAppointment);
       setSelectedMedicalRecord(null);
       setMedicalRecordForm(createEmptyMedicalRecordFormState());
+      setPatientHistoryAppointments([]);
+      setPatientHistorySearch('');
       setClinicSettings(DEFAULT_CLINIC_SETTINGS);
       setSavedClinicSettings(DEFAULT_CLINIC_SETTINGS);
       setAppointmentsByDate((current) => ({
@@ -1523,6 +1634,19 @@ export default function Home() {
     void loadMedicalRecordForConsultation(selectedConsultationId);
   }, [activeSection, loadMedicalRecordForConsultation, selectedConsultationId]);
 
+  useEffect(() => {
+    if (activeSection !== 'medicalRecords') {
+      return;
+    }
+
+    if (!selectedConsultation) {
+      setPatientHistoryAppointments([]);
+      return;
+    }
+
+    void loadPatientHistory(selectedConsultation.patientId);
+  }, [activeSection, loadPatientHistory, selectedConsultation]);
+
   async function onLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -1592,6 +1716,8 @@ export default function Home() {
     setSelectedConsultationId('');
     setSelectedMedicalRecord(null);
     setMedicalRecordForm(createEmptyMedicalRecordFormState());
+    setPatientHistoryAppointments([]);
+    setPatientHistorySearch('');
     setIsDemoMode(false);
     setClinicSettings(DEFAULT_CLINIC_SETTINGS);
     setSavedClinicSettings(DEFAULT_CLINIC_SETTINGS);
@@ -1785,6 +1911,21 @@ export default function Home() {
             ),
           };
         });
+
+        setPatientHistoryAppointments((current) =>
+          sortAppointments(
+            current.map((item) => {
+              if (item.id !== appointmentId) {
+                return item;
+              }
+
+              return {
+                ...item,
+                status: updated.status,
+              };
+            }),
+          ),
+        );
       }
 
       setStatusMessage('Status atualizado com sucesso.');
@@ -3040,6 +3181,78 @@ export default function Home() {
                         <p className="text-xs text-slate-500">
                           Campos com * sao obrigatorios para finalizacao do prontuario.
                         </p>
+
+                        <div className="border-t border-slate-200 pt-5">
+                          <div className="flex flex-wrap items-end justify-between gap-3">
+                            <div>
+                              <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                                Historico do paciente
+                              </p>
+                              <p className="mt-1 text-sm text-slate-700">
+                                Linha do tempo de consultas para contexto clinico.
+                              </p>
+                            </div>
+
+                            <label className="grid gap-1 text-xs uppercase tracking-[0.14em] text-slate-500">
+                              Buscar no historico
+                              <input
+                                value={patientHistorySearch}
+                                onChange={(event) =>
+                                  setPatientHistorySearch(event.target.value)
+                                }
+                                placeholder="Motivo, tutor ou veterinario"
+                                className="w-64 rounded-md border border-slate-300 px-3 py-2 text-sm normal-case tracking-normal text-slate-800 outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                              />
+                            </label>
+                          </div>
+
+                          {isPatientHistoryLoading ? (
+                            <p className="mt-4 text-sm text-slate-600">
+                              Carregando historico de consultas...
+                            </p>
+                          ) : filteredPatientHistory.length === 0 ? (
+                            <p className="mt-4 text-sm text-slate-600">
+                              Nenhuma consulta encontrada no historico com os filtros atuais.
+                            </p>
+                          ) : (
+                            <ul className="mt-4 divide-y divide-slate-200 border border-slate-200 bg-slate-50/40">
+                              {filteredPatientHistory.map((appointment) => {
+                                const isCurrentConsultation =
+                                  appointment.id === selectedConsultation.id;
+
+                                return (
+                                  <li
+                                    key={`history-${appointment.id}`}
+                                    className={`px-4 py-3 ${
+                                      isCurrentConsultation ? 'bg-teal-50/70' : 'bg-white'
+                                    }`}
+                                  >
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <p className="text-sm font-semibold text-slate-900">
+                                        {formatDateTime(appointment.startsAt)}
+                                      </p>
+                                      <div className="flex items-center gap-2">
+                                        {isCurrentConsultation && (
+                                          <span className="rounded-full border border-teal-300 bg-teal-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-teal-800">
+                                            Consulta atual
+                                          </span>
+                                        )}
+                                        <StatusBadge status={appointment.status} />
+                                      </div>
+                                    </div>
+                                    <p className="mt-1 text-sm text-slate-700">
+                                      {appointment.reason}
+                                    </p>
+                                    <p className="mt-1 text-xs text-slate-500">
+                                      Veterinario: {appointment.veterinarianName} | Tutor:{' '}
+                                      {appointment.tutor.name}
+                                    </p>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>

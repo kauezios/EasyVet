@@ -8,5 +8,10 @@ export class ListAppointmentsQueryDto {
   @IsOptional()
   @IsString()
   @MaxLength(120)
+  patientId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
   veterinarianName?: string;
 }

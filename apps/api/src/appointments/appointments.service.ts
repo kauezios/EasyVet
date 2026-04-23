@@ -94,6 +94,10 @@ export class AppointmentsService {
       };
     }
 
+    if (query.patientId) {
+      where.patientId = query.patientId;
+    }
+
     if (query.veterinarianName) {
       where.veterinarianName = {
         contains: query.veterinarianName,
