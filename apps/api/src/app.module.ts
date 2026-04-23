@@ -7,6 +7,7 @@ import { AppointmentsModule } from './appointments/appointments.module';
 import { MedicalRecordsModule } from './medical-records/medical-records.module';
 import { ProfilesModule } from './profiles/profiles.module';
 import { AuthModule } from './auth/auth.module';
+import { ClinicSettingsModule } from './clinic-settings/clinic-settings.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { AuthModule } from './auth/auth.module';
     MedicalRecordsModule,
     ProfilesModule,
     AuthModule,
+    ClinicSettingsModule,
   ],
 })
 export class AppModule {}

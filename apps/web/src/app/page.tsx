@@ -251,6 +251,11 @@ const DEMO_CREDENTIALS: Array<{
 ];
 
 const SCHEDULING_DAYS_WINDOW = 10;
+const DEFAULT_CLINIC_SETTINGS: ClinicScheduleSettings = {
+  consultationDurationMinutes: 30,
+  openingTime: '08:00',
+  closingTime: '18:00',
+};
 
 function toLocalISODate(date: Date): string {
   const offset = date.getTimezoneOffset();
@@ -355,6 +360,17 @@ function generateDailySlots(
   return slots;
 }
 
+function clinicSettingsAreEqual(
+  first: ClinicScheduleSettings,
+  second: ClinicScheduleSettings,
+): boolean {
+  return (
+    first.consultationDurationMinutes === second.consultationDurationMinutes &&
+    first.openingTime === second.openingTime &&
+    first.closingTime === second.closingTime
+  );
+}
+
 function shouldBlockSlotByStatus(status: AppointmentStatus): boolean {
   return status !== 'CANCELED';
 }
@@ -415,6 +431,10 @@ function normalizeErrorMessage(error: unknown, fallback: string): string {
 
   if (error.message.includes('NETWORK_ERROR')) {
     return 'API indisponivel no momento (erro de conexao).';
+  }
+
+  if (error.message.includes('INTERNAL_SERVER_ERROR')) {
+    return 'API indisponivel no momento (erro interno).';
   }
 
   return error.message;
@@ -640,11 +660,11 @@ export default function Home() {
   const [schedulingDate, setSchedulingDate] = useState<string>(
     toLocalISODate(new Date()),
   );
-  const [clinicSettings, setClinicSettings] = useState<ClinicScheduleSettings>({
-    consultationDurationMinutes: 30,
-    openingTime: '08:00',
-    closingTime: '18:00',
-  });
+  const [clinicSettings, setClinicSettings] = useState<ClinicScheduleSettings>(
+    DEFAULT_CLINIC_SETTINGS,
+  );
+  const [savedClinicSettings, setSavedClinicSettings] =
+    useState<ClinicScheduleSettings>(DEFAULT_CLINIC_SETTINGS);
 
   const [tutors, setTutors] = useState<Tutor[]>([]);
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -659,6 +679,7 @@ export default function Home() {
   const [isAppointmentSaving, setIsAppointmentSaving] = useState(false);
   const [isPatientSaving, setIsPatientSaving] = useState(false);
   const [isAvailabilityLoading, setIsAvailabilityLoading] = useState(false);
+  const [isClinicSettingsSaving, setIsClinicSettingsSaving] = useState(false);
 
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -902,6 +923,30 @@ export default function Home() {
     sortedAppointments,
   ]);
 
+  const clinicScheduleValidationError = useMemo(() => {
+    const openingMinutes = timeToMinutes(clinicSettings.openingTime);
+    const closingMinutes = timeToMinutes(clinicSettings.closingTime);
+
+    if (
+      Number.isNaN(openingMinutes) ||
+      Number.isNaN(closingMinutes) ||
+      openingMinutes >= closingMinutes
+    ) {
+      return 'O horario de inicio precisa ser menor que o horario de termino.';
+    }
+
+    const scheduleWindowMinutes = closingMinutes - openingMinutes;
+    if (scheduleWindowMinutes < clinicSettings.consultationDurationMinutes) {
+      return 'A duracao da consulta nao pode exceder a janela de expediente.';
+    }
+
+    return '';
+  }, [clinicSettings]);
+
+  const hasPendingClinicSettingsChanges = useMemo(() => {
+    return !clinicSettingsAreEqual(clinicSettings, savedClinicSettings);
+  }, [clinicSettings, savedClinicSettings]);
+
   const selectedTutorByDocument = useMemo(() => {
     const resolvedById = sortedTutors.find(
       (tutor) => tutor.id === patientForm.tutorResolvedId,
@@ -993,11 +1038,22 @@ export default function Home() {
         request<Appointment[]>(`/appointments?date=${selectedDate}`),
       ]);
 
+      let scheduleData = DEFAULT_CLINIC_SETTINGS;
+      try {
+        scheduleData = await request<ClinicScheduleSettings>(
+          '/clinic-settings/schedule',
+        );
+      } catch {
+        scheduleData = DEFAULT_CLINIC_SETTINGS;
+      }
+
       const sortedDayAppointments = sortAppointments(appointmentData);
 
       setTutors(tutorData);
       setPatients(patientData);
       setAppointments(sortedDayAppointments);
+      setClinicSettings(scheduleData);
+      setSavedClinicSettings(scheduleData);
       setAppointmentsByDate((current) => ({
         ...current,
         [selectedDate]: sortedDayAppointments,
@@ -1023,6 +1079,8 @@ export default function Home() {
       setTutors(demoDataset.tutors);
       setPatients(demoDataset.patients);
       setAppointments(demoDataset.appointments);
+      setClinicSettings(DEFAULT_CLINIC_SETTINGS);
+      setSavedClinicSettings(DEFAULT_CLINIC_SETTINGS);
       setAppointmentsByDate((current) => ({
         ...current,
         [selectedDate]: demoDataset.appointments,
@@ -1189,6 +1247,8 @@ export default function Home() {
     setAppointmentsByDate({});
     setProfiles([]);
     setIsDemoMode(false);
+    setClinicSettings(DEFAULT_CLINIC_SETTINGS);
+    setSavedClinicSettings(DEFAULT_CLINIC_SETTINGS);
     setErrorMessage('');
     setStatusMessage('Sessao finalizada.');
     setActiveSection('consultations');
@@ -1418,6 +1478,69 @@ export default function Home() {
     }
 
     void onChangeAppointmentStatus(appointmentId, 'CANCELED');
+  }
+
+  function onDiscardClinicSettingsChanges() {
+    setClinicSettings(savedClinicSettings);
+    setAppointmentForm((current) => ({
+      ...current,
+      startsAt: '',
+    }));
+    setStatusMessage('Alteracoes locais de agenda foram descartadas.');
+    setErrorMessage('');
+  }
+
+  async function onSaveClinicSettings() {
+    setStatusMessage('');
+    setErrorMessage('');
+
+    if (!hasPendingClinicSettingsChanges) {
+      setStatusMessage('Nenhuma alteracao pendente para salvar.');
+      return;
+    }
+
+    if (clinicScheduleValidationError) {
+      setErrorMessage(clinicScheduleValidationError);
+      return;
+    }
+
+    setIsClinicSettingsSaving(true);
+
+    try {
+      if (isDemoMode) {
+        setSavedClinicSettings(clinicSettings);
+        setStatusMessage(
+          'Configuracoes salvas no modo demonstracao (somente sessao atual).',
+        );
+        return;
+      }
+
+      const updatedSettings = await request<ClinicScheduleSettings>(
+        '/clinic-settings/schedule',
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            consultationDurationMinutes:
+              clinicSettings.consultationDurationMinutes,
+            openingTime: clinicSettings.openingTime,
+            closingTime: clinicSettings.closingTime,
+          }),
+        },
+      );
+
+      setClinicSettings(updatedSettings);
+      setSavedClinicSettings(updatedSettings);
+      setStatusMessage('Configuracoes da clinica salvas com sucesso.');
+    } catch (error) {
+      setErrorMessage(
+        normalizeErrorMessage(
+          error,
+          'Falha ao salvar configuracoes de agenda da clinica.',
+        ),
+      );
+    } finally {
+      setIsClinicSettingsSaving(false);
+    }
   }
 
   function onLookupTutorByDocument() {
@@ -2685,6 +2808,7 @@ export default function Home() {
                       max={180}
                       step={5}
                       value={clinicSettings.consultationDurationMinutes}
+                      disabled={isClinicSettingsSaving}
                       onChange={(event) => {
                         const parsed = Number(event.target.value);
                         if (!Number.isFinite(parsed)) {
@@ -2713,6 +2837,7 @@ export default function Home() {
                       <input
                         type="time"
                         value={clinicSettings.openingTime}
+                        disabled={isClinicSettingsSaving}
                         onChange={(event) => {
                           setClinicSettings((current) => ({
                             ...current,
@@ -2732,6 +2857,7 @@ export default function Home() {
                       <input
                         type="time"
                         value={clinicSettings.closingTime}
+                        disabled={isClinicSettingsSaving}
                         onChange={(event) => {
                           setClinicSettings((current) => ({
                             ...current,
@@ -2746,6 +2872,45 @@ export default function Home() {
                       />
                     </label>
                   </div>
+
+                  {clinicScheduleValidationError && (
+                    <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {clinicScheduleValidationError}
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={onDiscardClinicSettingsChanges}
+                      disabled={
+                        isClinicSettingsSaving || !hasPendingClinicSettingsChanges
+                      }
+                      className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Descartar alteracoes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void onSaveClinicSettings();
+                      }}
+                      disabled={
+                        isClinicSettingsSaving ||
+                        !hasPendingClinicSettingsChanges ||
+                        Boolean(clinicScheduleValidationError)
+                      }
+                      className="rounded-md bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isClinicSettingsSaving ? 'Salvando...' : 'Salvar configuracoes'}
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-slate-500">
+                    {isDemoMode
+                      ? 'Modo demonstracao: o salvamento vale somente para esta sessao.'
+                      : 'As alteracoes salvas ficam persistidas para todos os acessos.'}
+                  </p>
                 </div>
               </div>
 
@@ -2771,6 +2936,11 @@ export default function Home() {
                   </li>
                   <li>
                     Horarios ocupados aparecem bloqueados para novas marcacoes.
+                  </li>
+                  <li>
+                    {hasPendingClinicSettingsChanges
+                      ? 'Existem alteracoes pendentes de salvamento.'
+                      : 'Todas as configuracoes atuais ja estao salvas.'}
                   </li>
                 </ul>
               </div>

@@ -17,6 +17,21 @@ async function main() {
   const dateKey = new Date().toISOString().slice(0, 10);
   const passwordHash = createPasswordHash('easyvet123');
 
+  await prisma.clinicScheduleSettings.upsert({
+    where: { id: 'default' },
+    update: {
+      consultationDurationMinutes: 30,
+      openingTime: '08:00',
+      closingTime: '18:00',
+    },
+    create: {
+      id: 'default',
+      consultationDurationMinutes: 30,
+      openingTime: '08:00',
+      closingTime: '18:00',
+    },
+  });
+
   await prisma.user.upsert({
     where: { email: 'admin@easyvet.local' },
     update: {

@@ -142,3 +142,12 @@ model AuditEvent {
   @@index([entity, entityId])
 }
 
+model ClinicScheduleSettings {
+  id                          String   @id @default("default")
+  consultationDurationMinutes Int      @default(30)
+  openingTime                 String   @default("08:00")
+  closingTime                 String   @default("18:00")
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+}
+
