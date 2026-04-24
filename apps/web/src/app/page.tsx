@@ -399,6 +399,13 @@ function formatTime(dateIso: string): string {
   });
 }
 
+function timeInputFromDateTime(dateIso: string): string {
+  const date = new Date(dateIso);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(
+    date.getMinutes(),
+  ).padStart(2, '0')}`;
+}
+
 function formatDateTime(dateIso: string): string {
   return new Date(dateIso).toLocaleString('pt-BR', {
     day: '2-digit',
@@ -485,6 +492,7 @@ function buildSlotsAvailability(
   appointments: Appointment[],
   options?: {
     ignoreCanceledAppointments?: boolean;
+    ignoreAppointmentId?: string;
   },
 ): SlotAvailability[] {
   return slots.map((slot) => {
@@ -493,6 +501,10 @@ function buildSlotsAvailability(
     slotEnd.setMinutes(slotEnd.getMinutes() + durationMinutes);
 
     const appointment = appointments.find((item) => {
+      if (options?.ignoreAppointmentId && item.id === options.ignoreAppointmentId) {
+        return false;
+      }
+
       if (
         options?.ignoreCanceledAppointments &&
         !shouldBlockSlotByStatus(item.status)
@@ -997,6 +1009,12 @@ export default function Home() {
   const [demoMedicalRecordsByAppointment, setDemoMedicalRecordsByAppointment] =
     useState<Record<string, MedicalRecord>>({});
   const [selectedConsultationId, setSelectedConsultationId] = useState('');
+  const [isRescheduleDrawerOpen, setIsRescheduleDrawerOpen] = useState(false);
+  const [rescheduleAppointmentId, setRescheduleAppointmentId] = useState('');
+  const [rescheduleDate, setRescheduleDate] = useState<string>(
+    toLocalISODate(new Date()),
+  );
+  const [rescheduleStartsAt, setRescheduleStartsAt] = useState('');
   const [selectedMedicalRecord, setSelectedMedicalRecord] =
     useState<MedicalRecord | null>(null);
   const [medicalRecordForm, setMedicalRecordForm] = useState<MedicalRecordFormState>(
@@ -1011,6 +1029,7 @@ export default function Home() {
   const [isProfileSaving, setIsProfileSaving] = useState(false);
   const [isInactivityScanRunning, setIsInactivityScanRunning] = useState(false);
   const [isInactivityPolicySaving, setIsInactivityPolicySaving] = useState(false);
+  const [isRescheduleSaving, setIsRescheduleSaving] = useState(false);
   const [isAppointmentSaving, setIsAppointmentSaving] = useState(false);
   const [isPatientSaving, setIsPatientSaving] = useState(false);
   const [isAvailabilityLoading, setIsAvailabilityLoading] = useState(false);
@@ -1452,6 +1471,78 @@ export default function Home() {
     dailySlots,
     selectedDate,
     sortedAppointments,
+  ]);
+
+  const knownAppointments = useMemo(() => {
+    return mergeUniqueAppointments(appointments, appointmentsByDate);
+  }, [appointments, appointmentsByDate]);
+
+  const rescheduleTargetAppointment = useMemo(() => {
+    return (
+      knownAppointments.find((appointment) => appointment.id === rescheduleAppointmentId) ??
+      null
+    );
+  }, [knownAppointments, rescheduleAppointmentId]);
+
+  const appointmentsForRescheduleDate = useMemo(() => {
+    return appointmentsByDate[rescheduleDate] ?? [];
+  }, [appointmentsByDate, rescheduleDate]);
+
+  const rescheduleSlotsAvailability = useMemo(() => {
+    if (!rescheduleTargetAppointment) {
+      return [] as SlotAvailability[];
+    }
+
+    return buildSlotsAvailability(
+      rescheduleDate,
+      dailySlots,
+      clinicSettings.consultationDurationMinutes,
+      appointmentsForRescheduleDate,
+      {
+        ignoreCanceledAppointments: true,
+        ignoreAppointmentId: rescheduleTargetAppointment.id,
+      },
+    );
+  }, [
+    appointmentsForRescheduleDate,
+    clinicSettings.consultationDurationMinutes,
+    dailySlots,
+    rescheduleDate,
+    rescheduleTargetAppointment,
+  ]);
+
+  const rescheduleDaySummaries = useMemo(() => {
+    if (!rescheduleTargetAppointment) {
+      return [] as Array<{ dateIso: string; freeCount: number; isLoaded: boolean }>;
+    }
+
+    return schedulingDatesWindow.map((dateIso) => {
+      const isLoaded = dateIso in appointmentsByDate;
+      const dateAppointments = appointmentsByDate[dateIso] ?? [];
+      const slots = buildSlotsAvailability(
+        dateIso,
+        dailySlots,
+        clinicSettings.consultationDurationMinutes,
+        dateAppointments,
+        {
+          ignoreCanceledAppointments: true,
+          ignoreAppointmentId: rescheduleTargetAppointment.id,
+        },
+      );
+      const freeCount = slots.filter((slot) => !slot.blocked).length;
+
+      return {
+        dateIso,
+        freeCount,
+        isLoaded,
+      };
+    });
+  }, [
+    appointmentsByDate,
+    clinicSettings.consultationDurationMinutes,
+    dailySlots,
+    rescheduleTargetAppointment,
+    schedulingDatesWindow,
   ]);
 
   const clinicScheduleValidationError = useMemo(() => {
@@ -2031,6 +2122,53 @@ export default function Home() {
     }
   }, [activeSection, authUser, canManageUsers, inactivityPolicy, loadInactivityPolicy]);
 
+  useEffect(() => {
+    if (!isRescheduleDrawerOpen || !rescheduleTargetAppointment) {
+      return;
+    }
+
+    const selected = rescheduleSlotsAvailability.find(
+      (slot) => slot.time === rescheduleStartsAt,
+    );
+
+    if (selected && !selected.blocked) {
+      return;
+    }
+
+    const nextFree = rescheduleSlotsAvailability.find((slot) => !slot.blocked);
+    setRescheduleStartsAt(nextFree?.time ?? '');
+  }, [
+    isRescheduleDrawerOpen,
+    rescheduleSlotsAvailability,
+    rescheduleStartsAt,
+    rescheduleTargetAppointment,
+  ]);
+
+  useEffect(() => {
+    if (!isRescheduleDrawerOpen || !rescheduleTargetAppointment) {
+      return;
+    }
+
+    if (!(rescheduleDate in appointmentsByDate)) {
+      void ensureAppointmentsByDate([rescheduleDate]);
+    }
+  }, [
+    appointmentsByDate,
+    ensureAppointmentsByDate,
+    isRescheduleDrawerOpen,
+    rescheduleDate,
+    rescheduleTargetAppointment,
+  ]);
+
+  useEffect(() => {
+    if (isRescheduleDrawerOpen && !rescheduleTargetAppointment) {
+      setIsRescheduleDrawerOpen(false);
+      setRescheduleAppointmentId('');
+      setRescheduleStartsAt('');
+      setIsRescheduleSaving(false);
+    }
+  }, [isRescheduleDrawerOpen, rescheduleTargetAppointment]);
+
   async function onLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -2114,6 +2252,10 @@ export default function Home() {
     setMedicalRecordForm(createEmptyMedicalRecordFormState());
     setPatientHistoryAppointments([]);
     setPatientHistorySearch('');
+    setIsRescheduleDrawerOpen(false);
+    setRescheduleAppointmentId('');
+    setRescheduleDate(toLocalISODate(new Date()));
+    setRescheduleStartsAt('');
     setIsDemoMode(false);
     setClinicSettings(DEFAULT_CLINIC_SETTINGS);
     setSavedClinicSettings(DEFAULT_CLINIC_SETTINGS);
@@ -2147,6 +2289,58 @@ export default function Home() {
     if (!(dateIso in appointmentsByDate)) {
       void ensureAppointmentsByDate([dateIso]);
     }
+  }
+
+  function onPrepareReturnScheduling() {
+    if (!selectedConsultation) {
+      return;
+    }
+
+    const suggestedDate =
+      medicalRecordForm.recommendedReturnAt ||
+      toLocalISODate(new Date(selectedConsultation.startsAt));
+
+    const targetDate = schedulingDatesWindow.includes(suggestedDate)
+      ? suggestedDate
+      : schedulingDatesWindow[0] ?? toLocalISODate(new Date());
+
+    setActiveSection('scheduling');
+    setSchedulingDate(targetDate);
+    setAppointmentForm((current) => ({
+      ...current,
+      patientId: selectedConsultation.patientId,
+      veterinarianName: selectedConsultation.veterinarianName,
+      reason: `Retorno - ${selectedConsultation.patient.name}`,
+      startsAt: '',
+    }));
+
+    if (!(targetDate in appointmentsByDate)) {
+      void ensureAppointmentsByDate([targetDate]);
+    }
+
+    setErrorMessage('');
+    setStatusMessage(
+      `Fluxo de retorno preparado para ${selectedConsultation.patient.name}.`,
+    );
+  }
+
+  function onOpenRescheduleDrawer(appointment: Appointment) {
+    const currentDate = toLocalISODate(new Date(appointment.startsAt));
+
+    setRescheduleAppointmentId(appointment.id);
+    setRescheduleDate(currentDate);
+    setRescheduleStartsAt(timeInputFromDateTime(appointment.startsAt));
+    setIsRescheduleDrawerOpen(true);
+
+    void ensureAppointmentsByDate(schedulingDatesWindow);
+  }
+
+  function onCloseRescheduleDrawer() {
+    setIsRescheduleDrawerOpen(false);
+    setRescheduleAppointmentId('');
+    setRescheduleDate(toLocalISODate(new Date()));
+    setRescheduleStartsAt('');
+    setIsRescheduleSaving(false);
   }
 
   async function onCreateAppointment(event: FormEvent<HTMLFormElement>) {
@@ -2255,6 +2449,132 @@ export default function Home() {
       );
     } finally {
       setIsAppointmentSaving(false);
+    }
+  }
+
+  async function onRescheduleAppointment() {
+    if (!rescheduleTargetAppointment) {
+      return;
+    }
+
+    if (!rescheduleStartsAt) {
+      setStatusMessage('');
+      setErrorMessage('Selecione um horario livre para concluir a remarcacao.');
+      return;
+    }
+
+    const selectedSlot = rescheduleSlotsAvailability.find(
+      (slot) => slot.time === rescheduleStartsAt,
+    );
+    if (!selectedSlot || selectedSlot.blocked) {
+      setStatusMessage('');
+      setErrorMessage('Horario indisponivel. Escolha outro intervalo livre.');
+      return;
+    }
+
+    const startsAt = joinDateAndTime(rescheduleDate, rescheduleStartsAt);
+    const endsAt = addMinutesToDate(
+      rescheduleDate,
+      rescheduleStartsAt,
+      clinicSettings.consultationDurationMinutes,
+    );
+
+    setStatusMessage('');
+    setErrorMessage('');
+    setIsRescheduleSaving(true);
+
+    try {
+      let updatedAppointment: Appointment;
+
+      if (isDemoMode) {
+        updatedAppointment = {
+          ...rescheduleTargetAppointment,
+          startsAt,
+          endsAt,
+          status:
+            rescheduleTargetAppointment.status === 'IN_PROGRESS'
+              ? 'SCHEDULED'
+              : rescheduleTargetAppointment.status,
+        };
+      } else {
+        updatedAppointment = await request<Appointment>(
+          `/appointments/${rescheduleTargetAppointment.id}/reschedule`,
+          {
+            method: 'PATCH',
+            body: JSON.stringify({
+              startsAt,
+              endsAt,
+              veterinarianName: rescheduleTargetAppointment.veterinarianName,
+            }),
+          },
+        );
+      }
+
+      const previousDate = toLocalISODate(new Date(rescheduleTargetAppointment.startsAt));
+      const updatedDate = toLocalISODate(new Date(updatedAppointment.startsAt));
+
+      setAppointmentsByDate((current) => {
+        const next = { ...current };
+        const previousDateItems = (next[previousDate] ?? []).filter(
+          (item) => item.id !== updatedAppointment.id,
+        );
+
+        if (previousDate === updatedDate) {
+          next[updatedDate] = sortAppointments([...previousDateItems, updatedAppointment]);
+          return next;
+        }
+
+        next[previousDate] = sortAppointments(previousDateItems);
+        next[updatedDate] = sortAppointments([
+          ...(next[updatedDate] ?? []),
+          updatedAppointment,
+        ]);
+        return next;
+      });
+
+      setAppointments((current) => {
+        if (selectedDate === previousDate && selectedDate === updatedDate) {
+          return sortAppointments(
+            current.map((item) =>
+              item.id === updatedAppointment.id ? updatedAppointment : item,
+            ),
+          );
+        }
+
+        if (selectedDate === previousDate && selectedDate !== updatedDate) {
+          return sortAppointments(
+            current.filter((item) => item.id !== updatedAppointment.id),
+          );
+        }
+
+        if (selectedDate !== previousDate && selectedDate === updatedDate) {
+          return sortAppointments([
+            ...current.filter((item) => item.id !== updatedAppointment.id),
+            updatedAppointment,
+          ]);
+        }
+
+        return current;
+      });
+
+      setPatientHistoryAppointments((current) =>
+        sortAppointments(
+          current.map((item) =>
+            item.id === updatedAppointment.id ? updatedAppointment : item,
+          ),
+        ),
+      );
+
+      onCloseRescheduleDrawer();
+      setStatusMessage(
+        `Consulta remarcada para ${formatDateTime(updatedAppointment.startsAt)}.`,
+      );
+    } catch (error) {
+      setErrorMessage(
+        normalizeErrorMessage(error, 'Falha ao remarcar consulta.'),
+      );
+    } finally {
+      setIsRescheduleSaving(false);
     }
   }
 
@@ -3614,6 +3934,15 @@ export default function Home() {
                                 highlight
                               />
                               <TinyActionButton
+                                title="Remarcar"
+                                onClick={() => onOpenRescheduleDrawer(slot.appointment!)}
+                                disabled={
+                                  slot.appointment.status === 'COMPLETED' ||
+                                  slot.appointment.status === 'CANCELED' ||
+                                  slot.appointment.status === 'IN_PROGRESS'
+                                }
+                              />
+                              <TinyActionButton
                                 title="Confirmar"
                                 onClick={() =>
                                   void onChangeAppointmentStatus(
@@ -3973,6 +4302,14 @@ export default function Home() {
                             {isMedicalRecordFinalizing
                               ? 'Finalizando...'
                               : 'Finalizar prontuario'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={onPrepareReturnScheduling}
+                            disabled={!medicalRecordForm.recommendedReturnAt}
+                            className="rounded-md border border-cyan-300 bg-cyan-50 px-4 py-2 text-sm font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-55"
+                          >
+                            Agendar retorno
                           </button>
                         </div>
 
@@ -5332,6 +5669,165 @@ export default function Home() {
             </section>
           )}
         </div>
+
+        {isRescheduleDrawerOpen && rescheduleTargetAppointment && (
+          <div className="fixed inset-0 z-40 bg-slate-900/35 backdrop-blur-[1px]">
+            <div className="absolute inset-y-0 right-0 w-full max-w-4xl overflow-y-auto border-l border-slate-300 bg-white shadow-[0_20px_60px_-20px_rgba(2,6,23,0.45)]">
+              <div className="grid min-h-full lg:grid-cols-[320px_1fr]">
+                <aside className="border-b border-slate-200 bg-gradient-to-b from-teal-900 via-teal-800 to-teal-900 px-5 py-5 text-teal-50 lg:border-b-0 lg:border-r lg:border-teal-700/70">
+                  <p className="text-xs uppercase tracking-[0.2em] text-teal-200/90">
+                    Remarcacao
+                  </p>
+                  <h3 className="mt-2 text-2xl font-semibold">
+                    {rescheduleTargetAppointment.patient.name}
+                  </h3>
+                  <p className="mt-1 text-sm text-teal-100/90">
+                    {rescheduleTargetAppointment.reason}
+                  </p>
+
+                  <div className="mt-5 space-y-2 text-sm">
+                    <p>
+                      Horario atual:{' '}
+                      <span className="font-semibold">
+                        {formatDateTime(rescheduleTargetAppointment.startsAt)}
+                      </span>
+                    </p>
+                    <p>
+                      Veterinario:{' '}
+                      <span className="font-semibold">
+                        {rescheduleTargetAppointment.veterinarianName}
+                      </span>
+                    </p>
+                    <p>
+                      Tutor:{' '}
+                      <span className="font-semibold">
+                        {rescheduleTargetAppointment.tutor.name}
+                      </span>
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={onCloseRescheduleDrawer}
+                    className="mt-6 rounded-md border border-white/35 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-teal-50 transition hover:bg-white/10"
+                  >
+                    Fechar painel
+                  </button>
+                </aside>
+
+                <section className="px-5 py-5">
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                    Escolha nova data e horario
+                  </p>
+                  <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                    Disponibilidade para remarcacao
+                  </h3>
+                  <p className="mt-2 text-sm text-slate-600">
+                    Horarios bloqueados ja possuem consulta ativa para este veterinario.
+                  </p>
+
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {rescheduleDaySummaries.map((day) => {
+                      const active = day.dateIso === rescheduleDate;
+
+                      return (
+                        <button
+                          key={`reschedule-day-${day.dateIso}`}
+                          type="button"
+                          onClick={() => setRescheduleDate(day.dateIso)}
+                          className={`border px-3 py-2 text-left transition ${
+                            active
+                              ? 'border-teal-400 bg-teal-50'
+                              : 'border-slate-200 bg-white hover:border-teal-200 hover:bg-teal-50/40'
+                          }`}
+                        >
+                          <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                            {formatWeekdayShort(day.dateIso)}
+                          </p>
+                          <p className="mt-1 text-sm font-semibold text-slate-900">
+                            {formatShortDateLabel(day.dateIso)}
+                          </p>
+                          <p
+                            className={`mt-1 text-xs ${
+                              day.freeCount > 0 ? 'text-emerald-700' : 'text-rose-700'
+                            }`}
+                          >
+                            {day.isLoaded
+                              ? `${day.freeCount} horario(s) livre(s)`
+                              : 'Carregando...'}
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-5 border border-slate-200 bg-slate-50 px-4 py-4">
+                    <p className="text-xs uppercase tracking-[0.16em] text-slate-500">
+                      Horarios disponiveis
+                    </p>
+                    <p className="mt-1 text-sm text-slate-700">{formatDayLabel(rescheduleDate)}</p>
+
+                    {isAvailabilityLoading ? (
+                      <p className="mt-3 text-sm text-slate-600">Atualizando disponibilidade...</p>
+                    ) : (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                        {rescheduleSlotsAvailability.map((slot) => {
+                          const active = slot.time === rescheduleStartsAt;
+
+                          return (
+                            <button
+                              key={`reschedule-slot-${rescheduleDate}-${slot.time}`}
+                              type="button"
+                              disabled={slot.blocked}
+                              onClick={() => setRescheduleStartsAt(slot.time)}
+                              className={`border px-3 py-2 text-sm font-medium transition ${
+                                slot.blocked
+                                  ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                                  : active
+                                  ? 'border-teal-500 bg-teal-100 text-teal-900'
+                                  : 'border-slate-300 bg-white text-slate-700 hover:border-teal-300 hover:bg-teal-50'
+                              }`}
+                            >
+                              {slot.time}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {!isAvailabilityLoading &&
+                      rescheduleSlotsAvailability.every((slot) => slot.blocked) && (
+                        <p className="mt-3 text-sm text-rose-700">
+                          Este dia nao possui horarios livres para remarcacao.
+                        </p>
+                      )}
+                  </div>
+
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={onCloseRescheduleDrawer}
+                      disabled={isRescheduleSaving}
+                      className="rounded-md border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-55"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void onRescheduleAppointment();
+                      }}
+                      disabled={isRescheduleSaving || !rescheduleStartsAt}
+                      className="rounded-md bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-55"
+                    >
+                      {isRescheduleSaving ? 'Salvando...' : 'Confirmar remarcacao'}
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
