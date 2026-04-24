@@ -15,6 +15,8 @@ import { RolesGuard } from '../common/auth/roles.guard';
 import { UserRole } from '../common/auth/user-role.enum';
 import { UpdateProfileActiveDto } from './dto/update-profile-active.dto';
 import { CreateProfileDto } from './dto/create-profile.dto';
+import { RunInactivityScanDto } from './dto/run-inactivity-scan.dto';
+import { UpdateInactivityPolicyDto } from './dto/update-inactivity-policy.dto';
 import { UpdateProfileRoleDto } from './dto/update-profile-role.dto';
 import { ProfilesService } from './profiles.service';
 
@@ -27,6 +29,22 @@ export class ProfilesController {
   @Get()
   list() {
     return this.profilesService.list();
+  }
+
+  @Get('inactivity-policy')
+  inactivityPolicy() {
+    return this.profilesService.getInactivityPolicySnapshot();
+  }
+
+  @Patch('inactivity-policy')
+  updateInactivityPolicy(
+    @Body() dto: UpdateInactivityPolicyDto,
+    @Req() req: RequestWithAuthUser,
+  ) {
+    return this.profilesService.updateInactivityPolicy(
+      dto,
+      req.authUser?.userId,
+    );
   }
 
   @Post()
@@ -50,5 +68,13 @@ export class ProfilesController {
     @Req() req: RequestWithAuthUser,
   ) {
     return this.profilesService.updateActive(id, dto, req.authUser?.userId);
+  }
+
+  @Post('inactivity-scan')
+  runInactivityScan(
+    @Body() dto: RunInactivityScanDto,
+    @Req() req: RequestWithAuthUser,
+  ) {
+    return this.profilesService.runInactivityScan(dto, req.authUser?.userId);
   }
 }

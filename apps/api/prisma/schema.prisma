@@ -42,12 +42,14 @@ model User {
   active       Boolean    @default(true)
   failedLoginAttempts Int @default(0)
   lockedUntil DateTime?
+  lastLoginAt DateTime?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
   @@index([role])
   @@index([active])
   @@index([lockedUntil])
+  @@index([lastLoginAt])
 }
 
 model Tutor {
@@ -152,5 +154,14 @@ model ClinicScheduleSettings {
   closingTime                 String   @default("18:00")
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
+}
+
+model InactivityPolicySettings {
+  id              String       @id @default("default")
+  enabled         Boolean      @default(true)
+  maxInactiveDays Int          @default(90)
+  excludedRoles   AccessRole[] @default([ADMIN])
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 }
 

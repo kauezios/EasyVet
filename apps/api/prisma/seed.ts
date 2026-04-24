@@ -32,6 +32,21 @@ async function main() {
     },
   });
 
+  await prisma.inactivityPolicySettings.upsert({
+    where: { id: 'default' },
+    update: {
+      enabled: true,
+      maxInactiveDays: 90,
+      excludedRoles: [AccessRole.ADMIN],
+    },
+    create: {
+      id: 'default',
+      enabled: true,
+      maxInactiveDays: 90,
+      excludedRoles: [AccessRole.ADMIN],
+    },
+  });
+
   await prisma.user.upsert({
     where: { email: 'admin@easyvet.local' },
     update: {
@@ -41,6 +56,7 @@ async function main() {
       active: true,
       failedLoginAttempts: 0,
       lockedUntil: null,
+      lastLoginAt: new Date(),
     },
     create: {
       name: 'Administrador EasyVet',
@@ -50,6 +66,7 @@ async function main() {
       active: true,
       failedLoginAttempts: 0,
       lockedUntil: null,
+      lastLoginAt: new Date(),
     },
   });
 
@@ -62,6 +79,7 @@ async function main() {
       active: true,
       failedLoginAttempts: 0,
       lockedUntil: null,
+      lastLoginAt: new Date(),
     },
     create: {
       name: 'Veterinario EasyVet',
@@ -71,6 +89,7 @@ async function main() {
       active: true,
       failedLoginAttempts: 0,
       lockedUntil: null,
+      lastLoginAt: new Date(),
     },
   });
 
@@ -83,6 +102,7 @@ async function main() {
       active: true,
       failedLoginAttempts: 0,
       lockedUntil: null,
+      lastLoginAt: new Date(),
     },
     create: {
       name: 'Recepcao EasyVet',
@@ -92,6 +112,7 @@ async function main() {
       active: true,
       failedLoginAttempts: 0,
       lockedUntil: null,
+      lastLoginAt: new Date(),
     },
   });
 

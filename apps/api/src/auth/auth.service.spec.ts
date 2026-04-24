@@ -12,6 +12,7 @@ type AuthUserEntity = {
   active: boolean;
   failedLoginAttempts: number;
   lockedUntil: Date | null;
+  lastLoginAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -42,6 +43,7 @@ describe('AuthService hardening', () => {
       active: true,
       failedLoginAttempts: 2,
       lockedUntil: null,
+      lastLoginAt: null,
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
       updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     };
@@ -109,6 +111,7 @@ describe('AuthService hardening', () => {
       active: true,
       failedLoginAttempts: 2,
       lockedUntil: null,
+      lastLoginAt: null,
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
       updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     };
@@ -116,7 +119,12 @@ describe('AuthService hardening', () => {
     const prisma = {
       user: {
         findUnique: jest.fn().mockResolvedValue(user),
-        update: jest.fn().mockResolvedValue(null),
+        update: jest.fn().mockResolvedValue({
+          ...user,
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+          lastLoginAt: new Date('2026-01-05T12:00:00.000Z'),
+        }),
       },
     };
 
@@ -133,15 +141,22 @@ describe('AuthService hardening', () => {
 
     expect(result.user.email).toBe('admin@easyvet.local');
     expect(result.accessToken).toBeTruthy();
-    expect(prisma.user.update).toHaveBeenCalledWith({
-      where: {
-        id: 'user-1',
+    const [updatePayload] = prisma.user.update.mock.calls[0] as [
+      {
+        where: {
+          id: string;
+        };
+        data: {
+          failedLoginAttempts: number;
+          lockedUntil: Date | null;
+          lastLoginAt: Date;
+        };
       },
-      data: {
-        failedLoginAttempts: 0,
-        lockedUntil: null,
-      },
-    });
+    ];
+    expect(updatePayload.where.id).toBe('user-1');
+    expect(updatePayload.data.failedLoginAttempts).toBe(0);
+    expect(updatePayload.data.lockedUntil).toBeNull();
+    expect(updatePayload.data.lastLoginAt).toBeInstanceOf(Date);
     expect(auditEvents.register).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'LOGIN_SUCCESS',

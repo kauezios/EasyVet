@@ -124,6 +124,7 @@ type AccessProfile = {
   email: string;
   role: ActorRole;
   active: boolean;
+  lastLoginAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -136,6 +137,38 @@ type AuditEvent = {
   action: string;
   summary: string | null;
   createdAt: string;
+};
+
+type InactivityPolicySnapshot = {
+  enabled: boolean;
+  maxInactiveDays: number;
+  excludedRoles: ActorRole[];
+  cutoffDate: string;
+};
+
+type InactiveUserCandidate = {
+  id: string;
+  name: string;
+  email: string;
+  role: ActorRole;
+  active: boolean;
+  lastLoginAt: string | null;
+  inactiveSince: string;
+};
+
+type InactivityScanResult = {
+  dryRun: boolean;
+  policy: InactivityPolicySnapshot;
+  evaluatedUsers: number;
+  matchedUsers: number;
+  updatedUsers: number;
+  affectedUsers: InactiveUserCandidate[];
+};
+
+type InactivityPolicyFormState = {
+  enabled: boolean;
+  maxInactiveDays: string;
+  excludedRoles: ActorRole[];
 };
 
 type WorkspaceSection =
@@ -607,6 +640,20 @@ function canFinalizeMedicalRecord(form: MedicalRecordFormState): boolean {
   return requiredValues.every((value) => value.trim().length > 0);
 }
 
+function buildInactivityPolicyFormState(
+  policy: InactivityPolicySnapshot,
+): InactivityPolicyFormState {
+  return {
+    enabled: policy.enabled,
+    maxInactiveDays: String(policy.maxInactiveDays),
+    excludedRoles: [...policy.excludedRoles],
+  };
+}
+
+function roleListAsKey(roles: ActorRole[]): string {
+  return [...roles].sort().join('|');
+}
+
 function normalizeErrorMessage(error: unknown, fallback: string): string {
   if (!(error instanceof Error)) {
     return fallback;
@@ -813,6 +860,7 @@ function createDemoDataset(date: string, fallbackVetName: string): DemoDataset {
       email: 'admin@easyvet.local',
       role: 'ADMIN',
       active: true,
+      lastLoginAt: new Date(new Date(now).getTime() - 1000 * 60 * 30).toISOString(),
       createdAt: now,
       updatedAt: now,
     },
@@ -822,6 +870,7 @@ function createDemoDataset(date: string, fallbackVetName: string): DemoDataset {
       email: 'vet@easyvet.local',
       role: 'VETERINARIAN',
       active: true,
+      lastLoginAt: new Date(new Date(now).getTime() - 1000 * 60 * 60 * 26).toISOString(),
       createdAt: now,
       updatedAt: now,
     },
@@ -831,6 +880,9 @@ function createDemoDataset(date: string, fallbackVetName: string): DemoDataset {
       email: 'recepcao@easyvet.local',
       role: 'RECEPTION',
       active: true,
+      lastLoginAt: new Date(
+        new Date(now).getTime() - 1000 * 60 * 60 * 24 * 140,
+      ).toISOString(),
       createdAt: now,
       updatedAt: now,
     },
@@ -927,6 +979,16 @@ export default function Home() {
     Record<string, Appointment[]>
   >({});
   const [profiles, setProfiles] = useState<AccessProfile[]>([]);
+  const [inactivityPolicy, setInactivityPolicy] =
+    useState<InactivityPolicySnapshot | null>(null);
+  const [inactivityPolicyForm, setInactivityPolicyForm] =
+    useState<InactivityPolicyFormState>({
+      enabled: true,
+      maxInactiveDays: '90',
+      excludedRoles: ['ADMIN'],
+    });
+  const [lastInactivityScanResult, setLastInactivityScanResult] =
+    useState<InactivityScanResult | null>(null);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditSearch, setAuditSearch] = useState('');
   const [auditEntityFilter, setAuditEntityFilter] = useState('ALL');
@@ -947,6 +1009,8 @@ export default function Home() {
 
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const [isProfileSaving, setIsProfileSaving] = useState(false);
+  const [isInactivityScanRunning, setIsInactivityScanRunning] = useState(false);
+  const [isInactivityPolicySaving, setIsInactivityPolicySaving] = useState(false);
   const [isAppointmentSaving, setIsAppointmentSaving] = useState(false);
   const [isPatientSaving, setIsPatientSaving] = useState(false);
   const [isAvailabilityLoading, setIsAvailabilityLoading] = useState(false);
@@ -1240,6 +1304,53 @@ export default function Home() {
       finished,
     };
   }, [appointments]);
+
+  const profileMetrics = useMemo(() => {
+    const total = profiles.length;
+    const active = profiles.filter((profile) => profile.active).length;
+    const inactive = profiles.filter((profile) => !profile.active).length;
+
+    return {
+      total,
+      active,
+      inactive,
+    };
+  }, [profiles]);
+
+  const inactivityPolicyMaxDaysError = useMemo(() => {
+    const parsed = Number(inactivityPolicyForm.maxInactiveDays);
+
+    if (!Number.isInteger(parsed)) {
+      return 'Defina um limite inteiro de dias.';
+    }
+
+    if (parsed < 1 || parsed > 3650) {
+      return 'O limite deve ficar entre 1 e 3650 dias.';
+    }
+
+    return '';
+  }, [inactivityPolicyForm.maxInactiveDays]);
+
+  const hasPendingInactivityPolicyChanges = useMemo(() => {
+    if (!inactivityPolicy) {
+      return false;
+    }
+
+    if (inactivityPolicy.enabled !== inactivityPolicyForm.enabled) {
+      return true;
+    }
+
+    if (
+      inactivityPolicy.maxInactiveDays !== Number(inactivityPolicyForm.maxInactiveDays)
+    ) {
+      return true;
+    }
+
+    return (
+      roleListAsKey(inactivityPolicy.excludedRoles) !==
+      roleListAsKey(inactivityPolicyForm.excludedRoles)
+    );
+  }, [inactivityPolicy, inactivityPolicyForm]);
 
   const patientOptions = useMemo(() => {
     return patients.map((patient) => {
@@ -1614,6 +1725,47 @@ export default function Home() {
     }
   }, [authUser, isDemoMode, request, selectedDate]);
 
+  const loadInactivityPolicy = useCallback(async () => {
+    if (!authUser || authUser.role !== 'ADMIN') {
+      setInactivityPolicy(null);
+      setInactivityPolicyForm({
+        enabled: true,
+        maxInactiveDays: '90',
+        excludedRoles: ['ADMIN'],
+      });
+      return;
+    }
+
+    try {
+      if (isDemoMode) {
+        const demoPolicy: InactivityPolicySnapshot = {
+          enabled: true,
+          maxInactiveDays: 90,
+          excludedRoles: ['ADMIN'],
+          cutoffDate: new Date(
+            Date.now() - 90 * 24 * 60 * 60 * 1000,
+          ).toISOString(),
+        };
+        setInactivityPolicy(demoPolicy);
+        setInactivityPolicyForm(buildInactivityPolicyFormState(demoPolicy));
+        return;
+      }
+
+      const policy = await request<InactivityPolicySnapshot>(
+        '/profiles/inactivity-policy',
+      );
+      setInactivityPolicy(policy);
+      setInactivityPolicyForm(buildInactivityPolicyFormState(policy));
+    } catch (error) {
+      setErrorMessage(
+        normalizeErrorMessage(
+          error,
+          'Falha ao carregar politica de inatividade de usuarios.',
+        ),
+      );
+    }
+  }, [authUser, isDemoMode, request]);
+
   const bootstrapWorkspace = useCallback(async () => {
     if (!authUser) {
       return;
@@ -1659,17 +1811,28 @@ export default function Home() {
       }));
 
       if (authUser.role === 'ADMIN') {
-        const [profileData, auditData] = await Promise.all([
+        const [profileData, auditData, inactivityPolicyData] = await Promise.all([
           request<AccessProfile[]>('/profiles'),
           request<AuditEvent[]>('/audit-events?limit=120'),
+          request<InactivityPolicySnapshot>('/profiles/inactivity-policy'),
         ]);
         setProfiles(profileData);
         setAuditEvents(auditData);
         setAuditReferenceNow(getAuditReferenceTimestamp(auditData));
+        setInactivityPolicy(inactivityPolicyData);
+        setInactivityPolicyForm(buildInactivityPolicyFormState(inactivityPolicyData));
+        setLastInactivityScanResult(null);
       } else {
         setProfiles([]);
         setAuditEvents([]);
         setAuditReferenceNow(0);
+        setInactivityPolicy(null);
+        setInactivityPolicyForm({
+          enabled: true,
+          maxInactiveDays: '90',
+          excludedRoles: ['ADMIN'],
+        });
+        setLastInactivityScanResult(null);
       }
 
       setAppointmentForm((current) => ({
@@ -1702,6 +1865,17 @@ export default function Home() {
       setProfiles(demoDataset.profiles);
       setAuditEvents(demoDataset.auditEvents);
       setAuditReferenceNow(getAuditReferenceTimestamp(demoDataset.auditEvents));
+      const demoPolicy: InactivityPolicySnapshot = {
+        enabled: true,
+        maxInactiveDays: 90,
+        excludedRoles: ['ADMIN'],
+        cutoffDate: new Date(
+          Date.now() - 90 * 24 * 60 * 60 * 1000,
+        ).toISOString(),
+      };
+      setInactivityPolicy(demoPolicy);
+      setInactivityPolicyForm(buildInactivityPolicyFormState(demoPolicy));
+      setLastInactivityScanResult(null);
 
       setAppointmentForm((current) => ({
         ...current,
@@ -1847,6 +2021,16 @@ export default function Home() {
     void loadAuditEvents();
   }, [activeSection, loadAuditEvents]);
 
+  useEffect(() => {
+    if (activeSection !== 'users' || !authUser || !canManageUsers) {
+      return;
+    }
+
+    if (!inactivityPolicy) {
+      void loadInactivityPolicy();
+    }
+  }, [activeSection, authUser, canManageUsers, inactivityPolicy, loadInactivityPolicy]);
+
   async function onLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -1912,6 +2096,13 @@ export default function Home() {
     setAppointments([]);
     setAppointmentsByDate({});
     setProfiles([]);
+    setInactivityPolicy(null);
+    setInactivityPolicyForm({
+      enabled: true,
+      maxInactiveDays: '90',
+      excludedRoles: ['ADMIN'],
+    });
+    setLastInactivityScanResult(null);
     setAuditEvents([]);
     setAuditReferenceNow(0);
     setAuditSearch('');
@@ -2669,6 +2860,7 @@ export default function Home() {
           email: profileForm.email.trim().toLowerCase(),
           role: profileForm.role,
           active: true,
+          lastLoginAt: null,
           createdAt: now,
           updatedAt: now,
         };
@@ -2854,6 +3046,239 @@ export default function Home() {
       );
     } finally {
       setProfileStatusSavingId('');
+    }
+  }
+
+  function onToggleInactivityExcludedRole(role: ActorRole) {
+    setInactivityPolicyForm((current) => {
+      const hasRole = current.excludedRoles.includes(role);
+
+      return {
+        ...current,
+        excludedRoles: hasRole
+          ? current.excludedRoles.filter((item) => item !== role)
+          : [...current.excludedRoles, role],
+      };
+    });
+  }
+
+  function onDiscardInactivityPolicyChanges() {
+    if (!inactivityPolicy) {
+      return;
+    }
+
+    setInactivityPolicyForm(buildInactivityPolicyFormState(inactivityPolicy));
+    setStatusMessage('Alteracoes da politica descartadas.');
+    setErrorMessage('');
+  }
+
+  async function onSaveInactivityPolicy() {
+    if (!authUser || !canManageUsers || !inactivityPolicy) {
+      return;
+    }
+
+    const parsedMaxDays = Number(inactivityPolicyForm.maxInactiveDays);
+    if (!Number.isInteger(parsedMaxDays) || parsedMaxDays < 1 || parsedMaxDays > 3650) {
+      setStatusMessage('');
+      setErrorMessage('Defina um limite inteiro de 1 a 3650 dias para inatividade.');
+      return;
+    }
+
+    const excludedRoles = Array.from(new Set(inactivityPolicyForm.excludedRoles));
+
+    setStatusMessage('');
+    setErrorMessage('');
+    setIsInactivityPolicySaving(true);
+
+    try {
+      if (isDemoMode) {
+        const updatedPolicy: InactivityPolicySnapshot = {
+          enabled: inactivityPolicyForm.enabled,
+          maxInactiveDays: parsedMaxDays,
+          excludedRoles,
+          cutoffDate: new Date(
+            Date.now() - parsedMaxDays * 24 * 60 * 60 * 1000,
+          ).toISOString(),
+        };
+
+        setInactivityPolicy(updatedPolicy);
+        setInactivityPolicyForm(buildInactivityPolicyFormState(updatedPolicy));
+        setLastInactivityScanResult(null);
+
+        const now = new Date().toISOString();
+        setAuditEvents((current) => [
+          {
+            id: `demo-audit-policy-${Date.now()}`,
+            actorId: authUser.id,
+            entity: 'SYSTEM_POLICY',
+            entityId: 'default',
+            action: 'INACTIVITY_POLICY_UPDATED',
+            summary: `Politica ajustada para ${parsedMaxDays} dia(s); ativa=${inactivityPolicyForm.enabled ? 'sim' : 'nao'}`,
+            createdAt: now,
+          },
+          ...current,
+        ]);
+        setAuditReferenceNow(new Date(now).getTime());
+      } else {
+        const updatedPolicy = await request<InactivityPolicySnapshot>(
+          '/profiles/inactivity-policy',
+          {
+            method: 'PATCH',
+            body: JSON.stringify({
+              enabled: inactivityPolicyForm.enabled,
+              maxInactiveDays: parsedMaxDays,
+              excludedRoles,
+            }),
+          },
+        );
+
+        setInactivityPolicy(updatedPolicy);
+        setInactivityPolicyForm(buildInactivityPolicyFormState(updatedPolicy));
+        setLastInactivityScanResult(null);
+        await loadAuditEvents();
+      }
+
+      setStatusMessage('Politica de inatividade atualizada com sucesso.');
+    } catch (error) {
+      setErrorMessage(
+        normalizeErrorMessage(
+          error,
+          'Falha ao salvar politica de inatividade de usuarios.',
+        ),
+      );
+    } finally {
+      setIsInactivityPolicySaving(false);
+    }
+  }
+
+  async function onRunInactivityScan(dryRun: boolean) {
+    if (!authUser || !canManageUsers) {
+      return;
+    }
+
+    setStatusMessage('');
+    setErrorMessage('');
+    setIsInactivityScanRunning(true);
+
+    try {
+      if (isDemoMode) {
+        const policy =
+          inactivityPolicy ??
+          ({
+            enabled: true,
+            maxInactiveDays: 90,
+            excludedRoles: ['ADMIN'],
+            cutoffDate: new Date(
+              Date.now() - 90 * 24 * 60 * 60 * 1000,
+            ).toISOString(),
+          } satisfies InactivityPolicySnapshot);
+
+        const cutoff = new Date(policy.cutoffDate).getTime();
+        const candidates = profiles
+          .filter((profile) => profile.active)
+          .filter((profile) => !policy.excludedRoles.includes(profile.role))
+          .filter((profile) => profile.id !== authUser.id)
+          .filter((profile) => {
+            const reference = profile.lastLoginAt ?? profile.createdAt;
+            return new Date(reference).getTime() <= cutoff;
+          })
+          .map((profile) => ({
+            id: profile.id,
+            name: profile.name,
+            email: profile.email,
+            role: profile.role,
+            active: profile.active,
+            lastLoginAt: profile.lastLoginAt,
+            inactiveSince: profile.lastLoginAt ?? profile.createdAt,
+          }));
+
+        if (!dryRun && policy.enabled && candidates.length > 0) {
+          const now = new Date().toISOString();
+          const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+
+          setProfiles((current) =>
+            current.map((profile) => {
+              if (!candidateIds.has(profile.id)) {
+                return profile;
+              }
+
+              return {
+                ...profile,
+                active: false,
+                updatedAt: now,
+              };
+            }),
+          );
+
+          setAuditEvents((current) => [
+            ...candidates.map((candidate) => ({
+              id: `demo-audit-${Date.now()}-${candidate.id}`,
+              actorId: authUser.id,
+              entity: 'USER',
+              entityId: candidate.id,
+              action: 'PROFILE_DEACTIVATED_INACTIVITY',
+              summary: `Perfil inativado por inatividade superior a ${policy.maxInactiveDays} dia(s)`,
+              createdAt: now,
+            })),
+            ...current,
+          ]);
+          setAuditReferenceNow(new Date(now).getTime());
+        }
+
+        const result: InactivityScanResult = {
+          dryRun,
+          policy,
+          evaluatedUsers: profiles.filter((profile) => profile.active).length,
+          matchedUsers: candidates.length,
+          updatedUsers: !dryRun && policy.enabled ? candidates.length : 0,
+          affectedUsers: candidates,
+        };
+
+        setLastInactivityScanResult(result);
+        setStatusMessage(
+          dryRun
+            ? `Simulacao concluida: ${result.matchedUsers} usuario(s) elegivel(is).`
+            : `Execucao concluida: ${result.updatedUsers} usuario(s) inativado(s).`,
+        );
+        return;
+      }
+
+      const result = await request<InactivityScanResult>(
+        '/profiles/inactivity-scan',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            dryRun,
+          }),
+        },
+      );
+
+      setLastInactivityScanResult(result);
+
+      if (!dryRun && result.updatedUsers > 0) {
+        const [profileData, auditData] = await Promise.all([
+          request<AccessProfile[]>('/profiles'),
+          request<AuditEvent[]>('/audit-events?limit=120'),
+        ]);
+        setProfiles(profileData);
+        setAuditEvents(auditData);
+        setAuditReferenceNow(getAuditReferenceTimestamp(auditData));
+      }
+
+      setStatusMessage(
+        dryRun
+          ? `Simulacao concluida: ${result.matchedUsers} usuario(s) elegivel(is).`
+          : `Execucao concluida: ${result.updatedUsers} usuario(s) inativado(s).`,
+      );
+    } catch (error) {
+      setErrorMessage(
+        normalizeErrorMessage(
+          error,
+          'Falha ao executar varredura de inatividade de usuarios.',
+        ),
+      );
+    } finally {
+      setIsInactivityScanRunning(false);
     }
   }
 
@@ -3837,7 +4262,216 @@ export default function Home() {
                   Seu perfil atual nao possui permissao para cadastrar ou editar usuarios.
                 </div>
               ) : (
-                <div className="grid gap-6 xl:grid-cols-[390px_1fr]">
+                <div className="grid gap-6">
+                  <div className="grid gap-6 xl:grid-cols-[1fr_1.2fr]">
+                    <div className="border border-slate-200 bg-white px-5 py-5">
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                        Panorama de usuarios
+                      </p>
+                      <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                        Estado atual da operacao
+                      </h3>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                        <AuditMetricCard
+                          label="Total"
+                          value={String(profileMetrics.total)}
+                          tone="neutral"
+                        />
+                        <AuditMetricCard
+                          label="Ativos"
+                          value={String(profileMetrics.active)}
+                          tone="positive"
+                        />
+                        <AuditMetricCard
+                          label="Inativos"
+                          value={String(profileMetrics.inactive)}
+                          tone={profileMetrics.inactive > 0 ? 'risk' : 'neutral'}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="border border-slate-200 bg-white px-5 py-5">
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                        Suspensao por inatividade
+                      </p>
+                      <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                        Execucao de politica administrativa
+                      </h3>
+                      <p className="mt-2 text-sm text-slate-600">
+                        A varredura considera o ultimo login do usuario e pode rodar em modo simulacao ou execucao real.
+                      </p>
+
+                      <div className="mt-4 grid gap-4 text-sm text-slate-700">
+                        <label className="inline-flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={inactivityPolicyForm.enabled}
+                            onChange={(event) =>
+                              setInactivityPolicyForm((current) => ({
+                                ...current,
+                                enabled: event.target.checked,
+                              }))
+                            }
+                            disabled={isInactivityPolicySaving || isInactivityScanRunning}
+                            className="h-4 w-4 rounded border-slate-300 text-teal-700 focus:ring-teal-500"
+                          />
+                          Politica ativa
+                        </label>
+
+                        <label className="grid gap-1.5">
+                          Limite de inatividade (dias)
+                          <input
+                            type="number"
+                            min={1}
+                            max={3650}
+                            step={1}
+                            value={inactivityPolicyForm.maxInactiveDays}
+                            onChange={(event) =>
+                              setInactivityPolicyForm((current) => ({
+                                ...current,
+                                maxInactiveDays: event.target.value,
+                              }))
+                            }
+                            disabled={isInactivityPolicySaving || isInactivityScanRunning}
+                            className="max-w-[180px] rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                          />
+                        </label>
+
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                            Roles excluidas da varredura
+                          </p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {(['ADMIN', 'VETERINARIAN', 'RECEPTION'] as ActorRole[]).map(
+                              (role) => {
+                                const selected =
+                                  inactivityPolicyForm.excludedRoles.includes(role);
+
+                                return (
+                                  <button
+                                    key={`excluded-role-${role}`}
+                                    type="button"
+                                    onClick={() => onToggleInactivityExcludedRole(role)}
+                                    disabled={
+                                      isInactivityPolicySaving || isInactivityScanRunning
+                                    }
+                                    className={`rounded-md border px-2.5 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] transition ${
+                                      selected
+                                        ? 'border-teal-400 bg-teal-50 text-teal-800'
+                                        : 'border-slate-300 text-slate-600 hover:bg-slate-100'
+                                    } disabled:cursor-not-allowed disabled:opacity-50`}
+                                  >
+                                    {ROLE_LABEL[role]}
+                                  </button>
+                                );
+                              },
+                            )}
+                          </div>
+                        </div>
+
+                        {inactivityPolicyMaxDaysError && (
+                          <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                            {inactivityPolicyMaxDaysError}
+                          </p>
+                        )}
+
+                        <p className="text-xs text-slate-500">
+                          Politica persistida atual: {inactivityPolicy?.enabled ? 'ativa' : 'inativa'} com{' '}
+                          {inactivityPolicy?.maxInactiveDays ?? '--'} dia(s) e exclusoes em{' '}
+                          {inactivityPolicy?.excludedRoles.join(', ') || 'nenhuma'}.
+                        </p>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={onDiscardInactivityPolicyChanges}
+                          disabled={
+                            isInactivityPolicySaving ||
+                            isInactivityScanRunning ||
+                            !hasPendingInactivityPolicyChanges
+                          }
+                          className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Descartar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void onSaveInactivityPolicy()}
+                          disabled={
+                            isInactivityPolicySaving ||
+                            isInactivityScanRunning ||
+                            !hasPendingInactivityPolicyChanges ||
+                            Boolean(inactivityPolicyMaxDaysError)
+                          }
+                          className="rounded-md border border-teal-300 bg-teal-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-teal-800 transition hover:bg-teal-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isInactivityPolicySaving ? 'Salvando...' : 'Salvar politica'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void onRunInactivityScan(true)}
+                          disabled={
+                            isInactivityScanRunning ||
+                            isInactivityPolicySaving ||
+                            hasPendingInactivityPolicyChanges
+                          }
+                          className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isInactivityScanRunning ? 'Processando...' : 'Simular'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void onRunInactivityScan(false)}
+                          disabled={
+                            isInactivityScanRunning ||
+                            isInactivityPolicySaving ||
+                            hasPendingInactivityPolicyChanges
+                          }
+                          className="rounded-md border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Executar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void loadInactivityPolicy()}
+                          disabled={isInactivityScanRunning || isInactivityPolicySaving}
+                          className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Atualizar politica
+                        </button>
+                      </div>
+
+                      {lastInactivityScanResult && (
+                        <div className="mt-4 border border-slate-200 bg-slate-50 px-3 py-3">
+                          <p className="text-xs uppercase tracking-[0.14em] text-slate-500">
+                            Ultima execucao
+                          </p>
+                          <p className="mt-2 text-sm text-slate-700">
+                            Avaliados: {lastInactivityScanResult.evaluatedUsers} | Elegiveis:{' '}
+                            {lastInactivityScanResult.matchedUsers} | Atualizados:{' '}
+                            {lastInactivityScanResult.updatedUsers}
+                          </p>
+                          {lastInactivityScanResult.affectedUsers.length > 0 && (
+                            <ul className="mt-2 space-y-1 text-xs text-slate-600">
+                              {lastInactivityScanResult.affectedUsers
+                                .slice(0, 3)
+                                .map((candidate) => (
+                                  <li key={`inactive-candidate-${candidate.id}`}>
+                                    {candidate.name} ({candidate.role}) - ultimo login:{' '}
+                                    {candidate.lastLoginAt
+                                      ? formatDateTime(candidate.lastLoginAt)
+                                      : 'nunca'}
+                                  </li>
+                                ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-6 xl:grid-cols-[390px_1fr]">
                   <form className="border border-slate-200 bg-white px-5 py-5" onSubmit={onCreateProfile}>
                     <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
                       Cadastro de usuario
@@ -3966,6 +4600,12 @@ export default function Home() {
                                 </div>
                                 <p className="text-xs text-slate-500">{profile.email}</p>
                                 <p className="mt-1 text-[11px] text-slate-500">
+                                  Ultimo login:{' '}
+                                  {profile.lastLoginAt
+                                    ? formatDateTime(profile.lastLoginAt)
+                                    : 'nunca registrado'}
+                                </p>
+                                <p className="mt-1 text-[11px] text-slate-500">
                                   Atualizado em {formatDateTime(profile.updatedAt)}
                                 </p>
                               </div>
@@ -4023,6 +4663,7 @@ export default function Home() {
                         })}
                       </ul>
                     )}
+                  </div>
                   </div>
                 </div>
               )}

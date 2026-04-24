@@ -137,28 +137,27 @@ export class AuthService {
       });
     }
 
-    if (user.failedLoginAttempts > 0 || user.lockedUntil) {
-      await this.prisma.user.update({
-        where: {
-          id: user.id,
-        },
-        data: {
-          failedLoginAttempts: 0,
-          lockedUntil: null,
-        },
-      });
-    }
+    const persistedUser = await this.prisma.user.update({
+      where: {
+        id: user.id,
+      },
+      data: {
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+        lastLoginAt: now,
+      },
+    });
 
     const token = signAuthToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role as UserRole,
+      userId: persistedUser.id,
+      email: persistedUser.email,
+      role: persistedUser.role as UserRole,
     });
 
     await this.auditEvents.register({
-      actorId: user.id,
+      actorId: persistedUser.id,
       entity: 'AUTH',
-      entityId: user.id,
+      entityId: persistedUser.id,
       action: 'LOGIN_SUCCESS',
       summary: 'Acesso autenticado com sucesso',
     });
@@ -166,7 +165,7 @@ export class AuthService {
     return {
       accessToken: token.accessToken,
       expiresInSeconds: token.expiresInSeconds,
-      user: this.toAuthUser(user),
+      user: this.toAuthUser(persistedUser),
     };
   }
 
