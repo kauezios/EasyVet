@@ -931,6 +931,7 @@ export default function Home() {
   const [auditSearch, setAuditSearch] = useState('');
   const [auditEntityFilter, setAuditEntityFilter] = useState('ALL');
   const [auditActionFilter, setAuditActionFilter] = useState('ALL');
+  const [auditReferenceNow, setAuditReferenceNow] = useState(0);
   const [demoMedicalRecordsByAppointment, setDemoMedicalRecordsByAppointment] =
     useState<Record<string, MedicalRecord>>({});
   const [selectedConsultationId, setSelectedConsultationId] = useState('');
@@ -1188,6 +1189,41 @@ export default function Home() {
       (first, second) => first.localeCompare(second),
     );
   }, [auditEvents]);
+
+  const auditSummary = useMemo(() => {
+    const reference = auditReferenceNow > 0 ? auditReferenceNow : 0;
+    const twentyFourHoursAgo = reference - 24 * 60 * 60 * 1000;
+
+    const eventsLast24h = auditEvents.filter(
+      (event) => new Date(event.createdAt).getTime() >= twentyFourHoursAgo,
+    );
+    const riskEventsLast24h = eventsLast24h.filter((event) =>
+      isRiskAuditAction(event.action),
+    );
+    const uniqueActorsLast24h = new Set(
+      eventsLast24h.map((event) => event.actorId ?? 'SYSTEM'),
+    ).size;
+
+    const latestEvent = [...auditEvents].sort(
+      (first, second) =>
+        new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime(),
+    )[0];
+
+    return {
+      totalEvents: auditEvents.length,
+      eventsInView: filteredAuditEvents.length,
+      eventsLast24h: eventsLast24h.length,
+      riskEventsLast24h: riskEventsLast24h.length,
+      uniqueActorsLast24h,
+      latestEventAt: latestEvent?.createdAt ?? null,
+    };
+  }, [auditEvents, auditReferenceNow, filteredAuditEvents]);
+
+  const riskAuditEvents = useMemo(() => {
+    return filteredAuditEvents
+      .filter((event) => isRiskAuditAction(event.action))
+      .slice(0, 4);
+  }, [filteredAuditEvents]);
 
   const appointmentMetrics = useMemo(() => {
     const total = appointments.length;
@@ -1552,6 +1588,7 @@ export default function Home() {
   const loadAuditEvents = useCallback(async () => {
     if (!authUser || authUser.role !== 'ADMIN') {
       setAuditEvents([]);
+      setAuditReferenceNow(0);
       return;
     }
 
@@ -1561,11 +1598,13 @@ export default function Home() {
       if (isDemoMode) {
         const demoDataset = createDemoDataset(selectedDate, authUser.name);
         setAuditEvents(demoDataset.auditEvents);
+        setAuditReferenceNow(getAuditReferenceTimestamp(demoDataset.auditEvents));
         return;
       }
 
       const data = await request<AuditEvent[]>('/audit-events?limit=120');
       setAuditEvents(data);
+      setAuditReferenceNow(getAuditReferenceTimestamp(data));
     } catch (error) {
       setErrorMessage(
         normalizeErrorMessage(error, 'Falha ao carregar trilha de auditoria.'),
@@ -1626,9 +1665,11 @@ export default function Home() {
         ]);
         setProfiles(profileData);
         setAuditEvents(auditData);
+        setAuditReferenceNow(getAuditReferenceTimestamp(auditData));
       } else {
         setProfiles([]);
         setAuditEvents([]);
+        setAuditReferenceNow(0);
       }
 
       setAppointmentForm((current) => ({
@@ -1660,6 +1701,7 @@ export default function Home() {
       }));
       setProfiles(demoDataset.profiles);
       setAuditEvents(demoDataset.auditEvents);
+      setAuditReferenceNow(getAuditReferenceTimestamp(demoDataset.auditEvents));
 
       setAppointmentForm((current) => ({
         ...current,
@@ -1871,6 +1913,7 @@ export default function Home() {
     setAppointmentsByDate({});
     setProfiles([]);
     setAuditEvents([]);
+    setAuditReferenceNow(0);
     setAuditSearch('');
     setAuditEntityFilter('ALL');
     setAuditActionFilter('ALL');
@@ -2326,6 +2369,7 @@ export default function Home() {
           },
           ...current,
         ]);
+        setAuditReferenceNow(new Date(now).getTime());
         setStatusMessage(
           'Prontuario finalizado e consulta marcada como concluida (modo demonstracao).',
         );
@@ -2642,6 +2686,7 @@ export default function Home() {
           },
           ...current,
         ]);
+        setAuditReferenceNow(new Date(now).getTime());
       } else {
         const created = await request<AccessProfile>('/profiles', {
           method: 'POST',
@@ -2682,6 +2727,7 @@ export default function Home() {
 
     try {
       if (isDemoMode) {
+        const eventTime = new Date().toISOString();
         setProfiles((current) =>
           current.map((profile) => {
             if (profile.id !== profileId) {
@@ -2691,7 +2737,7 @@ export default function Home() {
             return {
               ...profile,
               role,
-              updatedAt: new Date().toISOString(),
+              updatedAt: eventTime,
             };
           }),
         );
@@ -2703,10 +2749,11 @@ export default function Home() {
             entityId: profileId,
             action: 'ROLE_CHANGED',
             summary: `Papel alterado para ${role}`,
-            createdAt: new Date().toISOString(),
+            createdAt: eventTime,
           },
           ...current,
         ]);
+        setAuditReferenceNow(new Date(eventTime).getTime());
       } else {
         const updated = await request<AccessProfile>(`/profiles/${profileId}/role`, {
           method: 'PATCH',
@@ -2772,6 +2819,7 @@ export default function Home() {
           },
           ...current,
         ]);
+        setAuditReferenceNow(new Date(now).getTime());
       } else {
         const updated = await request<AccessProfile>(
           `/profiles/${profileId}/active`,
@@ -2807,6 +2855,53 @@ export default function Home() {
     } finally {
       setProfileStatusSavingId('');
     }
+  }
+
+  function onExportAuditCsv() {
+    if (filteredAuditEvents.length === 0) {
+      setErrorMessage('Nao ha eventos para exportar com os filtros atuais.');
+      setStatusMessage('');
+      return;
+    }
+
+    const header = [
+      'created_at',
+      'entity',
+      'action',
+      'entity_id',
+      'actor_id',
+      'summary',
+    ];
+
+    const rows = filteredAuditEvents.map((event) => [
+      event.createdAt,
+      event.entity,
+      event.action,
+      event.entityId,
+      event.actorId ?? 'SYSTEM',
+      event.summary ?? '',
+    ]);
+
+    const csvContent = [
+      header.join(','),
+      ...rows.map((row) => row.map((value) => escapeCsvCell(value)).join(',')),
+    ].join('\n');
+
+    const blob = new Blob([csvContent], {
+      type: 'text/csv;charset=utf-8;',
+    });
+
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `easyvet-auditoria-${toLocalISODate(new Date())}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(url);
+
+    setErrorMessage('');
+    setStatusMessage('CSV da auditoria exportado com sucesso.');
   }
 
   if (!authUser) {
@@ -3953,14 +4048,65 @@ export default function Home() {
                       </p>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => void loadAuditEvents()}
-                      disabled={isAuditLoading}
-                      className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-65"
-                    >
-                      {isAuditLoading ? 'Atualizando...' : 'Atualizar'}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={onExportAuditCsv}
+                        disabled={isAuditLoading || filteredAuditEvents.length === 0}
+                        className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-65"
+                      >
+                        Exportar CSV
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void loadAuditEvents()}
+                        disabled={isAuditLoading}
+                        className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-65"
+                      >
+                        {isAuditLoading ? 'Atualizando...' : 'Atualizar'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="border-b border-slate-200 px-5 py-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                      Painel de seguranca
+                    </p>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                      <AuditMetricCard
+                        label="Total"
+                        value={String(auditSummary.totalEvents)}
+                        tone="neutral"
+                      />
+                      <AuditMetricCard
+                        label="Na visualizacao"
+                        value={String(auditSummary.eventsInView)}
+                        tone="neutral"
+                      />
+                      <AuditMetricCard
+                        label="Ultimas 24h"
+                        value={String(auditSummary.eventsLast24h)}
+                        tone="neutral"
+                      />
+                      <AuditMetricCard
+                        label="Risco 24h"
+                        value={String(auditSummary.riskEventsLast24h)}
+                        tone={
+                          auditSummary.riskEventsLast24h > 0 ? 'risk' : 'positive'
+                        }
+                      />
+                      <AuditMetricCard
+                        label="Atores 24h"
+                        value={String(auditSummary.uniqueActorsLast24h)}
+                        tone="neutral"
+                      />
+                    </div>
+                    <p className="mt-3 text-xs text-slate-500">
+                      Ultimo evento:{' '}
+                      {auditSummary.latestEventAt
+                        ? formatDateTime(auditSummary.latestEventAt)
+                        : 'sem registros recentes'}
+                    </p>
                   </div>
 
                   <div className="border-b border-slate-200 px-5 py-3">
@@ -4008,6 +4154,34 @@ export default function Home() {
                       </label>
                     </div>
                   </div>
+
+                  {!isAuditLoading && riskAuditEvents.length > 0 && (
+                    <div className="border-b border-rose-200 bg-rose-50/45 px-5 py-4">
+                      <p className="text-xs uppercase tracking-[0.2em] text-rose-700">
+                        Alertas de risco recentes
+                      </p>
+                      <ul className="mt-3 grid gap-2">
+                        {riskAuditEvents.map((event) => (
+                          <li
+                            key={`risk-${event.id}`}
+                            className="border border-rose-200 bg-white/80 px-3 py-2"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="text-xs font-semibold uppercase tracking-[0.14em] text-rose-700">
+                                {formatAuditAction(event.action)}
+                              </span>
+                              <span className="text-xs text-slate-500">
+                                {formatDateTime(event.createdAt)}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-sm text-slate-800">
+                              {event.summary ?? 'Evento sem resumo adicional'}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
 
                   {isAuditLoading ? (
                     <p className="px-5 py-8 text-sm text-slate-600">Carregando eventos...</p>
@@ -4536,8 +4710,35 @@ function sortProfiles(data: AccessProfile[]): AccessProfile[] {
   });
 }
 
+function escapeCsvCell(value: string): string {
+  const normalized = value.replace(/\r?\n/g, ' ').trim();
+  return `"${normalized.replace(/"/g, '""')}"`;
+}
+
+function getAuditReferenceTimestamp(events: AuditEvent[]): number {
+  const latest = [...events].sort(
+    (first, second) =>
+      new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime(),
+  )[0];
+
+  if (!latest) {
+    return 0;
+  }
+
+  return new Date(latest.createdAt).getTime();
+}
+
 function formatAuditAction(action: string): string {
   return action.replace(/_/g, ' ');
+}
+
+function isRiskAuditAction(action: string): boolean {
+  return (
+    action.includes('FAILED') ||
+    action.includes('LOCKED') ||
+    action.includes('BLOCKED') ||
+    action.includes('DEACTIVATED')
+  );
 }
 
 function auditActionStyles(action: string): string {
@@ -4562,6 +4763,30 @@ function auditActionStyles(action: string): string {
   }
 
   return 'bg-slate-100 text-slate-700';
+}
+
+function AuditMetricCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: 'neutral' | 'risk' | 'positive';
+}) {
+  const toneClass =
+    tone === 'risk'
+      ? 'border-rose-200 bg-rose-50 text-rose-800'
+      : tone === 'positive'
+      ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+      : 'border-slate-200 bg-slate-50 text-slate-800';
+
+  return (
+    <div className={`border px-3 py-3 ${toneClass}`}>
+      <p className="text-[11px] uppercase tracking-[0.14em] opacity-80">{label}</p>
+      <p className="mt-2 text-2xl font-semibold">{value}</p>
+    </div>
+  );
 }
 
 function MetricLine({ label, value }: { label: string; value: string }) {
