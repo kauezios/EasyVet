@@ -624,6 +624,10 @@ function normalizeErrorMessage(error: unknown, fallback: string): string {
     return 'Senha fora da politica de seguranca da clinica.';
   }
 
+  if (error.message.includes('PROFILE_SELF_DEACTIVATE_NOT_ALLOWED')) {
+    return 'Para seguranca, nao e permitido inativar o usuario da sessao atual.';
+  }
+
   if (error.message.includes('API_TIMEOUT')) {
     return 'API indisponivel no momento (timeout).';
   }
@@ -925,6 +929,8 @@ export default function Home() {
   const [profiles, setProfiles] = useState<AccessProfile[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditSearch, setAuditSearch] = useState('');
+  const [auditEntityFilter, setAuditEntityFilter] = useState('ALL');
+  const [auditActionFilter, setAuditActionFilter] = useState('ALL');
   const [demoMedicalRecordsByAppointment, setDemoMedicalRecordsByAppointment] =
     useState<Record<string, MedicalRecord>>({});
   const [selectedConsultationId, setSelectedConsultationId] = useState('');
@@ -949,6 +955,7 @@ export default function Home() {
   const [isMedicalRecordFinalizing, setIsMedicalRecordFinalizing] = useState(false);
   const [isPatientHistoryLoading, setIsPatientHistoryLoading] = useState(false);
   const [isAuditLoading, setIsAuditLoading] = useState(false);
+  const [profileStatusSavingId, setProfileStatusSavingId] = useState('');
 
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -1143,11 +1150,19 @@ export default function Home() {
         new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime(),
     );
 
-    if (!search) {
-      return sorted;
-    }
-
     return sorted.filter((event) => {
+      if (auditEntityFilter !== 'ALL' && event.entity !== auditEntityFilter) {
+        return false;
+      }
+
+      if (auditActionFilter !== 'ALL' && event.action !== auditActionFilter) {
+        return false;
+      }
+
+      if (!search) {
+        return true;
+      }
+
       const searchable = [
         event.action,
         event.entity,
@@ -1160,7 +1175,19 @@ export default function Home() {
 
       return searchable.includes(search);
     });
-  }, [auditEvents, auditSearch]);
+  }, [auditActionFilter, auditEntityFilter, auditEvents, auditSearch]);
+
+  const auditEntityOptions = useMemo(() => {
+    return Array.from(new Set(auditEvents.map((event) => event.entity))).sort(
+      (first, second) => first.localeCompare(second),
+    );
+  }, [auditEvents]);
+
+  const auditActionOptions = useMemo(() => {
+    return Array.from(new Set(auditEvents.map((event) => event.action))).sort(
+      (first, second) => first.localeCompare(second),
+    );
+  }, [auditEvents]);
 
   const appointmentMetrics = useMemo(() => {
     const total = appointments.length;
@@ -1585,6 +1612,8 @@ export default function Home() {
       setClinicSettings(scheduleData);
       setSavedClinicSettings(scheduleData);
       setAuditSearch('');
+      setAuditEntityFilter('ALL');
+      setAuditActionFilter('ALL');
       setAppointmentsByDate((current) => ({
         ...current,
         [selectedDate]: sortedDayAppointments,
@@ -1623,6 +1652,8 @@ export default function Home() {
       setClinicSettings(DEFAULT_CLINIC_SETTINGS);
       setSavedClinicSettings(DEFAULT_CLINIC_SETTINGS);
       setAuditSearch('');
+      setAuditEntityFilter('ALL');
+      setAuditActionFilter('ALL');
       setAppointmentsByDate((current) => ({
         ...current,
         [selectedDate]: demoDataset.appointments,
@@ -1841,6 +1872,8 @@ export default function Home() {
     setProfiles([]);
     setAuditEvents([]);
     setAuditSearch('');
+    setAuditEntityFilter('ALL');
+    setAuditActionFilter('ALL');
     setDemoMedicalRecordsByAppointment({});
     setSelectedConsultationId('');
     setSelectedMedicalRecord(null);
@@ -2699,6 +2732,80 @@ export default function Home() {
       setErrorMessage(
         normalizeErrorMessage(error, 'Falha ao atualizar papel do perfil.'),
       );
+    }
+  }
+
+  async function onUpdateProfileActive(profileId: string, active: boolean) {
+    if (!authUser || !canManageUsers) {
+      return;
+    }
+
+    setStatusMessage('');
+    setErrorMessage('');
+    setProfileStatusSavingId(profileId);
+
+    try {
+      if (isDemoMode) {
+        const now = new Date().toISOString();
+        setProfiles((current) =>
+          current.map((profile) => {
+            if (profile.id !== profileId) {
+              return profile;
+            }
+
+            return {
+              ...profile,
+              active,
+              updatedAt: now,
+            };
+          }),
+        );
+        setAuditEvents((current) => [
+          {
+            id: `demo-audit-${Date.now()}`,
+            actorId: authUser.id,
+            entity: 'USER',
+            entityId: profileId,
+            action: active ? 'PROFILE_ACTIVATED' : 'PROFILE_DEACTIVATED',
+            summary: active ? 'Perfil reativado' : 'Perfil inativado',
+            createdAt: now,
+          },
+          ...current,
+        ]);
+      } else {
+        const updated = await request<AccessProfile>(
+          `/profiles/${profileId}/active`,
+          {
+            method: 'PATCH',
+            body: JSON.stringify({
+              active,
+            }),
+          },
+        );
+
+        setProfiles((current) =>
+          current.map((profile) => {
+            if (profile.id !== profileId) {
+              return profile;
+            }
+
+            return updated;
+          }),
+        );
+        await loadAuditEvents();
+      }
+
+      setStatusMessage(
+        active
+          ? 'Usuario reativado com sucesso.'
+          : 'Usuario inativado com sucesso.',
+      );
+    } catch (error) {
+      setErrorMessage(
+        normalizeErrorMessage(error, 'Falha ao atualizar status do usuario.'),
+      );
+    } finally {
+      setProfileStatusSavingId('');
     }
   }
 
@@ -3728,7 +3835,7 @@ export default function Home() {
                         Usuarios da operacao
                       </p>
                       <h3 className="mt-2 text-xl font-semibold text-slate-900">
-                        Perfis ativos
+                        Perfis cadastrados
                       </h3>
                     </div>
 
@@ -3738,39 +3845,87 @@ export default function Home() {
                       </p>
                     ) : (
                       <ul className="divide-y divide-slate-200">
-                        {sortProfiles(profiles).map((profile) => (
-                          <li
-                            key={profile.id}
-                            className="grid gap-3 px-5 py-3 md:grid-cols-[1fr_auto]"
-                          >
-                            <div>
-                              <p className="text-sm font-medium text-slate-900">
-                                {profile.name}
-                              </p>
-                              <p className="text-xs text-slate-500">{profile.email}</p>
-                            </div>
+                        {sortProfiles(profiles).map((profile) => {
+                          const isSelfProfile = profile.id === authUser.id;
+                          const isSavingStatus = profileStatusSavingId === profile.id;
 
-                            <div className="grid gap-1 text-right">
-                              <select
-                                value={profile.role}
-                                onChange={(event) =>
-                                  void onUpdateProfileRole(
-                                    profile.id,
-                                    event.target.value as ActorRole,
-                                  )
-                                }
-                                className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
-                              >
-                                <option value="ADMIN">Administrador</option>
-                                <option value="VETERINARIAN">Veterinario</option>
-                                <option value="RECEPTION">Recepcao</option>
-                              </select>
-                              <p className="text-[11px] text-slate-500">
-                                Atualizado em {formatDateTime(profile.updatedAt)}
-                              </p>
-                            </div>
-                          </li>
-                        ))}
+                          return (
+                            <li
+                              key={profile.id}
+                              className="grid gap-3 px-5 py-3 lg:grid-cols-[1.2fr_auto_auto]"
+                            >
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="text-sm font-medium text-slate-900">
+                                    {profile.name}
+                                  </p>
+                                  <span
+                                    className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                                      profile.active
+                                        ? 'bg-emerald-100 text-emerald-700'
+                                        : 'bg-rose-100 text-rose-700'
+                                    }`}
+                                  >
+                                    {profile.active ? 'Ativo' : 'Inativo'}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-slate-500">{profile.email}</p>
+                                <p className="mt-1 text-[11px] text-slate-500">
+                                  Atualizado em {formatDateTime(profile.updatedAt)}
+                                </p>
+                              </div>
+
+                              <div className="grid gap-1 text-left lg:text-right">
+                                <label className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                                  Papel
+                                </label>
+                                <select
+                                  value={profile.role}
+                                  onChange={(event) =>
+                                    void onUpdateProfileRole(
+                                      profile.id,
+                                      event.target.value as ActorRole,
+                                    )
+                                  }
+                                  className="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                                >
+                                  <option value="ADMIN">Administrador</option>
+                                  <option value="VETERINARIAN">Veterinario</option>
+                                  <option value="RECEPTION">Recepcao</option>
+                                </select>
+                              </div>
+
+                              <div className="grid gap-1">
+                                <button
+                                  type="button"
+                                  disabled={isSelfProfile || isSavingStatus}
+                                  onClick={() =>
+                                    void onUpdateProfileActive(
+                                      profile.id,
+                                      !profile.active,
+                                    )
+                                  }
+                                  className={`rounded-md border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] transition ${
+                                    profile.active
+                                      ? 'border-rose-300 text-rose-700 hover:bg-rose-50'
+                                      : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'
+                                  } disabled:cursor-not-allowed disabled:opacity-50`}
+                                >
+                                  {isSavingStatus
+                                    ? 'Salvando...'
+                                    : profile.active
+                                      ? 'Inativar'
+                                      : 'Ativar'}
+                                </button>
+                                {isSelfProfile && (
+                                  <p className="text-[11px] text-slate-500">
+                                    Usuario da sessao atual
+                                  </p>
+                                )}
+                              </div>
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
@@ -3809,15 +3964,49 @@ export default function Home() {
                   </div>
 
                   <div className="border-b border-slate-200 px-5 py-3">
-                    <label className="grid gap-1.5 text-sm text-slate-700">
-                      Buscar por acao, entidade, resumo ou ID
-                      <input
-                        value={auditSearch}
-                        onChange={(event) => setAuditSearch(event.target.value)}
-                        placeholder="Ex.: LOGIN_LOCKED, MEDICAL_RECORD, user-123"
-                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
-                      />
-                    </label>
+                    <div className="grid gap-3 lg:grid-cols-[1.2fr_auto_auto]">
+                      <label className="grid gap-1.5 text-sm text-slate-700">
+                        Buscar por acao, entidade, resumo ou ID
+                        <input
+                          value={auditSearch}
+                          onChange={(event) => setAuditSearch(event.target.value)}
+                          placeholder="Ex.: LOGIN_LOCKED, MEDICAL_RECORD, user-123"
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                        />
+                      </label>
+
+                      <label className="grid gap-1 text-xs uppercase tracking-[0.14em] text-slate-500">
+                        Entidade
+                        <select
+                          value={auditEntityFilter}
+                          onChange={(event) => setAuditEntityFilter(event.target.value)}
+                          className="rounded-md border border-slate-300 px-2.5 py-2 text-xs outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                        >
+                          <option value="ALL">Todas</option>
+                          {auditEntityOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="grid gap-1 text-xs uppercase tracking-[0.14em] text-slate-500">
+                        Acao
+                        <select
+                          value={auditActionFilter}
+                          onChange={(event) => setAuditActionFilter(event.target.value)}
+                          className="rounded-md border border-slate-300 px-2.5 py-2 text-xs outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                        >
+                          <option value="ALL">Todas</option>
+                          {auditActionOptions.map((option) => (
+                            <option key={option} value={option}>
+                              {formatAuditAction(option)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
                   </div>
 
                   {isAuditLoading ? (
@@ -4352,8 +4541,16 @@ function formatAuditAction(action: string): string {
 }
 
 function auditActionStyles(action: string): string {
+  if (action.includes('DEACTIVATED')) {
+    return 'bg-rose-100 text-rose-700';
+  }
+
   if (action.includes('LOCKED') || action.includes('BLOCKED')) {
     return 'bg-rose-100 text-rose-700';
+  }
+
+  if (action.includes('ACTIVATED')) {
+    return 'bg-emerald-100 text-emerald-700';
   }
 
   if (action.includes('FAILED')) {

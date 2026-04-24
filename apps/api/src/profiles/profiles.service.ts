@@ -1,5 +1,6 @@
 import { Prisma, User } from '@prisma/client';
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -9,6 +10,7 @@ import { UserRole } from '../common/auth/user-role.enum';
 import { AuditEventsService } from '../audit-events/audit-events.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateProfileDto } from './dto/create-profile.dto';
+import { UpdateProfileActiveDto } from './dto/update-profile-active.dto';
 import { UpdateProfileRoleDto } from './dto/update-profile-role.dto';
 
 export type AccessProfile = {
@@ -95,6 +97,43 @@ export class ProfilesService {
         summary: `Papel alterado de ${existing.role} para ${updated.role}`,
       });
     }
+
+    return this.toAccessProfile(updated);
+  }
+
+  async updateActive(
+    id: string,
+    dto: UpdateProfileActiveDto,
+    actorId?: string,
+  ): Promise<AccessProfile> {
+    if (actorId && actorId === id && dto.active === false) {
+      throw new BadRequestException({
+        code: 'PROFILE_SELF_DEACTIVATE_NOT_ALLOWED',
+        message: 'Nao e permitido inativar o proprio usuario em sessao',
+      });
+    }
+
+    const existing = await this.ensureUserExists(id);
+    if (existing.active === dto.active) {
+      return this.toAccessProfile(existing);
+    }
+
+    const updated = await this.prisma.user.update({
+      where: {
+        id,
+      },
+      data: {
+        active: dto.active,
+      },
+    });
+
+    await this.auditEvents.register({
+      actorId: actorId ?? null,
+      entity: 'USER',
+      entityId: updated.id,
+      action: dto.active ? 'PROFILE_ACTIVATED' : 'PROFILE_DEACTIVATED',
+      summary: dto.active ? 'Perfil reativado' : 'Perfil inativado',
+    });
 
     return this.toAccessProfile(updated);
   }

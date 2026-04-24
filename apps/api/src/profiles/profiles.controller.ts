@@ -13,6 +13,7 @@ import type { RequestWithAuthUser } from '../common/auth/request-auth-user.type'
 import { Roles } from '../common/auth/roles.decorator';
 import { RolesGuard } from '../common/auth/roles.guard';
 import { UserRole } from '../common/auth/user-role.enum';
+import { UpdateProfileActiveDto } from './dto/update-profile-active.dto';
 import { CreateProfileDto } from './dto/create-profile.dto';
 import { UpdateProfileRoleDto } from './dto/update-profile-role.dto';
 import { ProfilesService } from './profiles.service';
@@ -40,5 +41,14 @@ export class ProfilesController {
     @Req() req: RequestWithAuthUser,
   ) {
     return this.profilesService.updateRole(id, dto, req.authUser?.userId);
+  }
+
+  @Patch(':id/active')
+  updateActive(
+    @Param('id') id: string,
+    @Body() dto: UpdateProfileActiveDto,
+    @Req() req: RequestWithAuthUser,
+  ) {
+    return this.profilesService.updateActive(id, dto, req.authUser?.userId);
   }
 }
