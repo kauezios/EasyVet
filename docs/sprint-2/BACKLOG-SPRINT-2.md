@@ -16,8 +16,8 @@ Evoluir de base operacional para base de produto seguro: autenticacao real, sess
 | EV-S2-002 | Sessao de acesso na UI | Frontend | Alta | 3 pts | Concluido | Login/logout visivel no workspace com perfil sincronizado |
 | EV-S2-003 | Endurecimento RBAC em rotas administrativas | Backend | Alta | 3 pts | Concluido | Perfis administrativos exigem token + role `ADMIN` |
 | EV-S2-004 | Tela de gestao de perfis operacionais | Frontend | Media | 5 pts | Concluido | Listar/criar/alterar perfis via API com feedback de erro |
-| EV-S2-005 | Auditoria de eventos sensiveis | Backend | Alta | 5 pts | Pendente | Log de autenticacao, alteracao de role e finalizacao de prontuario |
-| EV-S2-006 | Hardening de seguranca basico | Backend | Alta | 5 pts | Pendente | Politica de senha, lock de tentativas e expiracao de token configuravel |
+| EV-S2-005 | Auditoria de eventos sensiveis | Backend | Alta | 5 pts | Concluido | Log de autenticacao, alteracao de role e finalizacao de prontuario |
+| EV-S2-006 | Hardening de seguranca basico | Backend | Alta | 5 pts | Concluido | Politica de senha, lock de tentativas e expiracao de token configuravel |
 
 ## Dependencias
 

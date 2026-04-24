@@ -39,6 +39,8 @@ async function main() {
       passwordHash,
       role: AccessRole.ADMIN,
       active: true,
+      failedLoginAttempts: 0,
+      lockedUntil: null,
     },
     create: {
       name: 'Administrador EasyVet',
@@ -46,6 +48,8 @@ async function main() {
       passwordHash,
       role: AccessRole.ADMIN,
       active: true,
+      failedLoginAttempts: 0,
+      lockedUntil: null,
     },
   });
 
@@ -56,6 +60,8 @@ async function main() {
       passwordHash,
       role: AccessRole.VETERINARIAN,
       active: true,
+      failedLoginAttempts: 0,
+      lockedUntil: null,
     },
     create: {
       name: 'Veterinario EasyVet',
@@ -63,6 +69,8 @@ async function main() {
       passwordHash,
       role: AccessRole.VETERINARIAN,
       active: true,
+      failedLoginAttempts: 0,
+      lockedUntil: null,
     },
   });
 
@@ -73,6 +81,8 @@ async function main() {
       passwordHash,
       role: AccessRole.RECEPTION,
       active: true,
+      failedLoginAttempts: 0,
+      lockedUntil: null,
     },
     create: {
       name: 'Recepcao EasyVet',
@@ -80,6 +90,8 @@ async function main() {
       passwordHash,
       role: AccessRole.RECEPTION,
       active: true,
+      failedLoginAttempts: 0,
+      lockedUntil: null,
     },
   });
 

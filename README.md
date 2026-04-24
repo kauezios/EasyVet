@@ -5,7 +5,8 @@ EasyVet e uma plataforma para operacao veterinaria com foco em prontuario digita
 ## Estado atual
 
 - Sprint 0: concluida (governanca, arquitetura, dados, compliance e backlog).
-- Sprint 1: iniciada com base tecnica e primeiro fluxo funcional de cadastro.
+- Sprint 1: concluida (cadastro, agenda, prontuario, RBAC base, testes e CI).
+- Sprint 2: concluida (autenticacao real, sessao, gestao de perfis, auditoria e hardening).
 
 ## Monorepo
 

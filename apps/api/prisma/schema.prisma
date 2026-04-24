@@ -40,11 +40,14 @@ model User {
   passwordHash String
   role         AccessRole @default(VETERINARIAN)
   active       Boolean    @default(true)
+  failedLoginAttempts Int @default(0)
+  lockedUntil DateTime?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
   @@index([role])
   @@index([active])
+  @@index([lockedUntil])
 }
 
 model Tutor {

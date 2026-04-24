@@ -1,5 +1,6 @@
 import { UnauthorizedException } from '@nestjs/common';
 import { createHmac } from 'crypto';
+import { getAuthSecurityConfig } from './auth-security.config';
 import { RequestAuthUser } from './request-auth-user.type';
 import { UserRole } from './user-role.enum';
 
@@ -16,12 +17,11 @@ type TokenConfig = {
   expiresInSeconds: number;
 };
 
-const DEFAULT_EXPIRES_IN_SECONDS = 60 * 60 * 8;
-
 function getTokenConfig(): TokenConfig {
+  const securityConfig = getAuthSecurityConfig();
   return {
     secret: process.env.AUTH_TOKEN_SECRET ?? 'easyvet-dev-token-secret',
-    expiresInSeconds: DEFAULT_EXPIRES_IN_SECONDS,
+    expiresInSeconds: securityConfig.tokenExpiresInSeconds,
   };
 }
 

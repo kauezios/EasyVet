@@ -128,11 +128,22 @@ type AccessProfile = {
   updatedAt: string;
 };
 
+type AuditEvent = {
+  id: string;
+  actorId: string | null;
+  entity: string;
+  entityId: string;
+  action: string;
+  summary: string | null;
+  createdAt: string;
+};
+
 type WorkspaceSection =
   | 'consultations'
   | 'medicalRecords'
   | 'scheduling'
   | 'users'
+  | 'audit'
   | 'patients'
   | 'settings';
 
@@ -148,6 +159,7 @@ type DemoDataset = {
   patients: Patient[];
   appointments: Appointment[];
   profiles: AccessProfile[];
+  auditEvents: AuditEvent[];
   medicalRecordsByAppointment: Record<string, MedicalRecord>;
 };
 
@@ -198,6 +210,11 @@ const SECTION_ITEMS: SectionItem[] = [
     id: 'users',
     label: 'Cadastrar usuario',
     description: 'Gestao de perfis de acesso da equipe.',
+  },
+  {
+    id: 'audit',
+    label: 'Auditoria',
+    description: 'Eventos sensiveis de seguranca e operacao.',
   },
   {
     id: 'patients',
@@ -599,6 +616,14 @@ function normalizeErrorMessage(error: unknown, fallback: string): string {
     return 'E-mail ou senha invalidos.';
   }
 
+  if (error.message.includes('AUTH_ACCOUNT_LOCKED')) {
+    return 'Conta bloqueada temporariamente por tentativas invalidas. Aguarde alguns minutos e tente novamente.';
+  }
+
+  if (error.message.includes('AUTH_PASSWORD_POLICY_INVALID')) {
+    return 'Senha fora da politica de seguranca da clinica.';
+  }
+
   if (error.message.includes('API_TIMEOUT')) {
     return 'API indisponivel no momento (timeout).';
   }
@@ -807,6 +832,36 @@ function createDemoDataset(date: string, fallbackVetName: string): DemoDataset {
     },
   ];
 
+  const auditEvents: AuditEvent[] = [
+    {
+      id: 'demo-audit-1',
+      actorId: 'demo-user-admin',
+      entity: 'AUTH',
+      entityId: 'demo-user-admin',
+      action: 'LOGIN_SUCCESS',
+      summary: 'Acesso autenticado com sucesso',
+      createdAt: new Date(new Date(now).getTime() - 1000 * 60 * 6).toISOString(),
+    },
+    {
+      id: 'demo-audit-2',
+      actorId: 'demo-user-admin',
+      entity: 'USER',
+      entityId: 'demo-user-vet',
+      action: 'ROLE_CHANGED',
+      summary: 'Papel alterado de RECEPTION para VETERINARIAN',
+      createdAt: new Date(new Date(now).getTime() - 1000 * 60 * 21).toISOString(),
+    },
+    {
+      id: 'demo-audit-3',
+      actorId: 'demo-user-vet',
+      entity: 'MEDICAL_RECORD',
+      entityId: 'demo-record-1',
+      action: 'MEDICAL_RECORD_FINALIZED',
+      summary: 'Prontuario finalizado para consulta demo-appt-1',
+      createdAt: new Date(new Date(now).getTime() - 1000 * 60 * 39).toISOString(),
+    },
+  ];
+
   const medicalRecordsByAppointment: Record<string, MedicalRecord> = {
     'demo-appt-1': {
       id: 'demo-record-1',
@@ -831,6 +886,7 @@ function createDemoDataset(date: string, fallbackVetName: string): DemoDataset {
     patients,
     appointments,
     profiles,
+    auditEvents,
     medicalRecordsByAppointment,
   };
 }
@@ -867,6 +923,8 @@ export default function Home() {
     Record<string, Appointment[]>
   >({});
   const [profiles, setProfiles] = useState<AccessProfile[]>([]);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [auditSearch, setAuditSearch] = useState('');
   const [demoMedicalRecordsByAppointment, setDemoMedicalRecordsByAppointment] =
     useState<Record<string, MedicalRecord>>({});
   const [selectedConsultationId, setSelectedConsultationId] = useState('');
@@ -890,6 +948,7 @@ export default function Home() {
   const [isMedicalRecordSaving, setIsMedicalRecordSaving] = useState(false);
   const [isMedicalRecordFinalizing, setIsMedicalRecordFinalizing] = useState(false);
   const [isPatientHistoryLoading, setIsPatientHistoryLoading] = useState(false);
+  const [isAuditLoading, setIsAuditLoading] = useState(false);
 
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -1076,6 +1135,32 @@ export default function Home() {
       return searchable.includes(search);
     });
   }, [patientHistoryAppointments, patientHistorySearch]);
+
+  const filteredAuditEvents = useMemo(() => {
+    const search = auditSearch.trim().toLowerCase();
+    const sorted = [...auditEvents].sort(
+      (first, second) =>
+        new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime(),
+    );
+
+    if (!search) {
+      return sorted;
+    }
+
+    return sorted.filter((event) => {
+      const searchable = [
+        event.action,
+        event.entity,
+        event.entityId,
+        event.summary ?? '',
+        event.actorId ?? '',
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      return searchable.includes(search);
+    });
+  }, [auditEvents, auditSearch]);
 
   const appointmentMetrics = useMemo(() => {
     const total = appointments.length;
@@ -1437,6 +1522,32 @@ export default function Home() {
     [appointments, appointmentsByDate, isDemoMode, request],
   );
 
+  const loadAuditEvents = useCallback(async () => {
+    if (!authUser || authUser.role !== 'ADMIN') {
+      setAuditEvents([]);
+      return;
+    }
+
+    setIsAuditLoading(true);
+
+    try {
+      if (isDemoMode) {
+        const demoDataset = createDemoDataset(selectedDate, authUser.name);
+        setAuditEvents(demoDataset.auditEvents);
+        return;
+      }
+
+      const data = await request<AuditEvent[]>('/audit-events?limit=120');
+      setAuditEvents(data);
+    } catch (error) {
+      setErrorMessage(
+        normalizeErrorMessage(error, 'Falha ao carregar trilha de auditoria.'),
+      );
+    } finally {
+      setIsAuditLoading(false);
+    }
+  }, [authUser, isDemoMode, request, selectedDate]);
+
   const bootstrapWorkspace = useCallback(async () => {
     if (!authUser) {
       return;
@@ -1473,16 +1584,22 @@ export default function Home() {
       setPatientHistorySearch('');
       setClinicSettings(scheduleData);
       setSavedClinicSettings(scheduleData);
+      setAuditSearch('');
       setAppointmentsByDate((current) => ({
         ...current,
         [selectedDate]: sortedDayAppointments,
       }));
 
       if (authUser.role === 'ADMIN') {
-        const profileData = await request<AccessProfile[]>('/profiles');
+        const [profileData, auditData] = await Promise.all([
+          request<AccessProfile[]>('/profiles'),
+          request<AuditEvent[]>('/audit-events?limit=120'),
+        ]);
         setProfiles(profileData);
+        setAuditEvents(auditData);
       } else {
         setProfiles([]);
+        setAuditEvents([]);
       }
 
       setAppointmentForm((current) => ({
@@ -1505,11 +1622,13 @@ export default function Home() {
       setPatientHistorySearch('');
       setClinicSettings(DEFAULT_CLINIC_SETTINGS);
       setSavedClinicSettings(DEFAULT_CLINIC_SETTINGS);
+      setAuditSearch('');
       setAppointmentsByDate((current) => ({
         ...current,
         [selectedDate]: demoDataset.appointments,
       }));
       setProfiles(demoDataset.profiles);
+      setAuditEvents(demoDataset.auditEvents);
 
       setAppointmentForm((current) => ({
         ...current,
@@ -1647,6 +1766,14 @@ export default function Home() {
     void loadPatientHistory(selectedConsultation.patientId);
   }, [activeSection, loadPatientHistory, selectedConsultation]);
 
+  useEffect(() => {
+    if (activeSection !== 'audit') {
+      return;
+    }
+
+    void loadAuditEvents();
+  }, [activeSection, loadAuditEvents]);
+
   async function onLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -1712,6 +1839,8 @@ export default function Home() {
     setAppointments([]);
     setAppointmentsByDate({});
     setProfiles([]);
+    setAuditEvents([]);
+    setAuditSearch('');
     setDemoMedicalRecordsByAppointment({});
     setSelectedConsultationId('');
     setSelectedMedicalRecord(null);
@@ -2152,6 +2281,18 @@ export default function Home() {
         setSelectedMedicalRecord(finalizedRecord);
         setMedicalRecordForm(buildMedicalRecordFormFromRecord(finalizedRecord));
         patchAppointmentStatusLocally(selectedConsultation.id, 'COMPLETED');
+        setAuditEvents((current) => [
+          {
+            id: `demo-audit-${Date.now()}`,
+            actorId: authUser?.id ?? null,
+            entity: 'MEDICAL_RECORD',
+            entityId: finalizedRecord.id,
+            action: 'MEDICAL_RECORD_FINALIZED',
+            summary: `Prontuario finalizado para consulta ${selectedConsultation.id}`,
+            createdAt: now,
+          },
+          ...current,
+        ]);
         setStatusMessage(
           'Prontuario finalizado e consulta marcada como concluida (modo demonstracao).',
         );
@@ -2169,6 +2310,7 @@ export default function Home() {
       setSelectedMedicalRecord(finalizedRecord);
       setMedicalRecordForm(buildMedicalRecordFormFromRecord(finalizedRecord));
       patchAppointmentStatusLocally(selectedConsultation.id, 'COMPLETED');
+      await loadAuditEvents();
       setStatusMessage('Prontuario finalizado e consulta concluida.');
     } catch (error) {
       setErrorMessage(
@@ -2455,6 +2597,18 @@ export default function Home() {
         };
 
         setProfiles((current) => sortProfiles([created, ...current]));
+        setAuditEvents((current) => [
+          {
+            id: `demo-audit-${Date.now()}`,
+            actorId: authUser.id,
+            entity: 'USER',
+            entityId: created.id,
+            action: 'PROFILE_CREATED',
+            summary: `Perfil criado com papel ${created.role}`,
+            createdAt: now,
+          },
+          ...current,
+        ]);
       } else {
         const created = await request<AccessProfile>('/profiles', {
           method: 'POST',
@@ -2467,6 +2621,7 @@ export default function Home() {
         });
 
         setProfiles((current) => sortProfiles([created, ...current]));
+        await loadAuditEvents();
       }
 
       setProfileForm({
@@ -2507,6 +2662,18 @@ export default function Home() {
             };
           }),
         );
+        setAuditEvents((current) => [
+          {
+            id: `demo-audit-${Date.now()}`,
+            actorId: authUser.id,
+            entity: 'USER',
+            entityId: profileId,
+            action: 'ROLE_CHANGED',
+            summary: `Papel alterado para ${role}`,
+            createdAt: new Date().toISOString(),
+          },
+          ...current,
+        ]);
       } else {
         const updated = await request<AccessProfile>(`/profiles/${profileId}/role`, {
           method: 'PATCH',
@@ -2524,6 +2691,7 @@ export default function Home() {
             return updated;
           }),
         );
+        await loadAuditEvents();
       }
 
       setStatusMessage('Perfil atualizado com sucesso.');
@@ -2600,6 +2768,9 @@ export default function Home() {
 
           <div className="mt-6 border-t border-slate-200 pt-4 text-xs text-slate-500">
             <p>Credenciais de bootstrap: admin@easyvet.local / easyvet123</p>
+            <p className="mt-1">
+              Seguranca ativa: bloqueio temporario apos tentativas invalidas consecutivas.
+            </p>
           </div>
         </section>
       </main>
@@ -3606,6 +3777,91 @@ export default function Home() {
                 </div>
               )}
             </section>
+          ) : activeSection === 'audit' ? (
+            <section className="rise-in mx-auto w-full max-w-6xl">
+              {!canManageUsers ? (
+                <div className="border border-amber-200 bg-amber-50 px-6 py-6 text-sm text-amber-800">
+                  Apenas administradores podem visualizar a trilha de auditoria.
+                </div>
+              ) : (
+                <div className="overflow-hidden border border-slate-200 bg-white">
+                  <div className="grid gap-4 border-b border-slate-200 px-5 py-4 md:grid-cols-[1fr_auto] md:items-end">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                        Seguranca operacional
+                      </p>
+                      <h3 className="mt-2 text-xl font-semibold text-slate-900">
+                        Trilha de auditoria
+                      </h3>
+                      <p className="mt-2 text-sm text-slate-600">
+                        Eventos sensiveis de autenticacao, mudanca de perfil e finalizacao de prontuario.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => void loadAuditEvents()}
+                      disabled={isAuditLoading}
+                      className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-65"
+                    >
+                      {isAuditLoading ? 'Atualizando...' : 'Atualizar'}
+                    </button>
+                  </div>
+
+                  <div className="border-b border-slate-200 px-5 py-3">
+                    <label className="grid gap-1.5 text-sm text-slate-700">
+                      Buscar por acao, entidade, resumo ou ID
+                      <input
+                        value={auditSearch}
+                        onChange={(event) => setAuditSearch(event.target.value)}
+                        placeholder="Ex.: LOGIN_LOCKED, MEDICAL_RECORD, user-123"
+                        className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                      />
+                    </label>
+                  </div>
+
+                  {isAuditLoading ? (
+                    <p className="px-5 py-8 text-sm text-slate-600">Carregando eventos...</p>
+                  ) : filteredAuditEvents.length === 0 ? (
+                    <p className="px-5 py-8 text-sm text-slate-600">
+                      Nenhum evento encontrado para o filtro informado.
+                    </p>
+                  ) : (
+                    <ul className="divide-y divide-slate-200">
+                      {filteredAuditEvents.map((event) => (
+                        <li
+                          key={event.id}
+                          className="grid gap-2 px-5 py-3 md:grid-cols-[180px_1fr_auto]"
+                        >
+                          <div>
+                            <span
+                              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.12em] ${auditActionStyles(event.action)}`}
+                            >
+                              {formatAuditAction(event.action)}
+                            </span>
+                            <p className="mt-1 text-xs text-slate-500">{event.entity}</p>
+                          </div>
+
+                          <div>
+                            <p className="text-sm font-medium text-slate-900">
+                              {event.summary ?? 'Evento sem resumo adicional'}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Entity ID: {event.entityId} | Ator:{' '}
+                              {event.actorId ?? 'sistema/nao identificado'}
+                            </p>
+                          </div>
+
+                          <p className="text-xs text-slate-500">
+                            {formatDateTime(event.createdAt)}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </section>
           ) : activeSection === 'patients' ? (
             <section className="rise-in mx-auto grid w-full max-w-6xl gap-6 xl:grid-cols-[420px_1fr]">
               <form className="border border-slate-200 bg-white px-5 py-5" onSubmit={onCreatePatient}>
@@ -4089,6 +4345,26 @@ function sortProfiles(data: AccessProfile[]): AccessProfile[] {
   return [...data].sort((first, second) => {
     return first.name.localeCompare(second.name);
   });
+}
+
+function formatAuditAction(action: string): string {
+  return action.replace(/_/g, ' ');
+}
+
+function auditActionStyles(action: string): string {
+  if (action.includes('LOCKED') || action.includes('BLOCKED')) {
+    return 'bg-rose-100 text-rose-700';
+  }
+
+  if (action.includes('FAILED')) {
+    return 'bg-amber-100 text-amber-800';
+  }
+
+  if (action.includes('SUCCESS') || action.includes('FINALIZED')) {
+    return 'bg-emerald-100 text-emerald-700';
+  }
+
+  return 'bg-slate-100 text-slate-700';
 }
 
 function MetricLine({ label, value }: { label: string; value: string }) {

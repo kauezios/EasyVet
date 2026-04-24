@@ -5,9 +5,11 @@ import {
   Param,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { AuthenticatedGuard } from '../common/auth/authenticated.guard';
+import type { RequestWithAuthUser } from '../common/auth/request-auth-user.type';
 import { Roles } from '../common/auth/roles.decorator';
 import { RolesGuard } from '../common/auth/roles.guard';
 import { UserRole } from '../common/auth/user-role.enum';
@@ -27,12 +29,16 @@ export class ProfilesController {
   }
 
   @Post()
-  create(@Body() dto: CreateProfileDto) {
-    return this.profilesService.create(dto);
+  create(@Body() dto: CreateProfileDto, @Req() req: RequestWithAuthUser) {
+    return this.profilesService.create(dto, req.authUser?.userId);
   }
 
   @Patch(':id/role')
-  updateRole(@Param('id') id: string, @Body() dto: UpdateProfileRoleDto) {
-    return this.profilesService.updateRole(id, dto);
+  updateRole(
+    @Param('id') id: string,
+    @Body() dto: UpdateProfileRoleDto,
+    @Req() req: RequestWithAuthUser,
+  ) {
+    return this.profilesService.updateRole(id, dto, req.authUser?.userId);
   }
 }

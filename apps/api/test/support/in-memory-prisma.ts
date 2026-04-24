@@ -63,6 +63,16 @@ type MedicalRecordEntity = {
   updatedAt: Date;
 };
 
+type AuditEventEntity = {
+  id: string;
+  actorId: string | null;
+  entity: string;
+  entityId: string;
+  action: string;
+  summary: string | null;
+  createdAt: Date;
+};
+
 function copyEntity<T extends object>(entity: T): T {
   return { ...entity };
 }
@@ -89,6 +99,7 @@ export function createInMemoryPrisma() {
   const patients: PatientEntity[] = [];
   const appointments: AppointmentEntity[] = [];
   const medicalRecords: MedicalRecordEntity[] = [];
+  const auditEvents: AuditEventEntity[] = [];
 
   let sequence = 0;
   const createId = (prefix: string) => `${prefix}-${++sequence}`;
@@ -506,6 +517,43 @@ export function createInMemoryPrisma() {
           (item) => item.appointmentId === where.appointmentId,
         );
         return found ? copyEntity(found) : null;
+      },
+    },
+
+    auditEvent: {
+      create: async ({ data }: { data: Partial<AuditEventEntity> }) => {
+        const created: AuditEventEntity = {
+          id: createId('audit'),
+          actorId: data.actorId ?? null,
+          entity: data.entity ?? '',
+          entityId: data.entityId ?? '',
+          action: data.action ?? '',
+          summary: data.summary ?? null,
+          createdAt: data.createdAt ?? new Date(),
+        };
+        auditEvents.push(created);
+        return copyEntity(created);
+      },
+      findMany: async ({
+        orderBy,
+        take,
+      }: {
+        orderBy?: { createdAt?: 'asc' | 'desc' };
+        take?: number;
+      }) => {
+        const ordered = [...auditEvents];
+
+        if (orderBy?.createdAt === 'asc') {
+          ordered.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+        } else {
+          ordered.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+        }
+
+        if (typeof take === 'number') {
+          return ordered.slice(0, take).map((item) => copyEntity(item));
+        }
+
+        return ordered.map((item) => copyEntity(item));
       },
     },
 

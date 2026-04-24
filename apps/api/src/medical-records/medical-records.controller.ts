@@ -5,8 +5,10 @@ import {
   Param,
   Post,
   Put,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { RequestWithAuthUser } from '../common/auth/request-auth-user.type';
 import { Roles } from '../common/auth/roles.decorator';
 import { RolesGuard } from '../common/auth/roles.guard';
 import { UserRole } from '../common/auth/user-role.enum';
@@ -42,7 +44,12 @@ export class MedicalRecordsController {
   finalize(
     @Param('appointmentId') appointmentId: string,
     @Body() dto: FinalizeMedicalRecordDto,
+    @Req() req: RequestWithAuthUser,
   ) {
-    return this.medicalRecordsService.finalize(appointmentId, dto);
+    return this.medicalRecordsService.finalize(
+      appointmentId,
+      dto,
+      req.authUser?.userId,
+    );
   }
 }

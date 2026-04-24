@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { createPasswordHash } from '../common/auth/password.util';
 import { UserRole } from '../common/auth/user-role.enum';
+import { AuditEventsService } from '../audit-events/audit-events.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateProfileDto } from './dto/create-profile.dto';
 import { UpdateProfileRoleDto } from './dto/update-profile-role.dto';
@@ -22,7 +23,10 @@ export type AccessProfile = {
 
 @Injectable()
 export class ProfilesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditEvents: AuditEventsService,
+  ) {}
 
   async list(): Promise<AccessProfile[]> {
     const users = await this.prisma.user.findMany({
@@ -34,7 +38,10 @@ export class ProfilesService {
     return users.map((user) => this.toAccessProfile(user));
   }
 
-  async create(dto: CreateProfileDto): Promise<AccessProfile> {
+  async create(
+    dto: CreateProfileDto,
+    actorId?: string,
+  ): Promise<AccessProfile> {
     const normalizedEmail = dto.email.trim().toLowerCase();
 
     try {
@@ -48,6 +55,14 @@ export class ProfilesService {
         },
       });
 
+      await this.auditEvents.register({
+        actorId: actorId ?? null,
+        entity: 'USER',
+        entityId: created.id,
+        action: 'PROFILE_CREATED',
+        summary: `Perfil criado com papel ${created.role}`,
+      });
+
       return this.toAccessProfile(created);
     } catch (error) {
       this.handleUniqueConstraint(error);
@@ -58,8 +73,9 @@ export class ProfilesService {
   async updateRole(
     id: string,
     dto: UpdateProfileRoleDto,
+    actorId?: string,
   ): Promise<AccessProfile> {
-    await this.ensureUserExists(id);
+    const existing = await this.ensureUserExists(id);
 
     const updated = await this.prisma.user.update({
       where: {
@@ -70,16 +86,23 @@ export class ProfilesService {
       },
     });
 
+    if (existing.role !== updated.role) {
+      await this.auditEvents.register({
+        actorId: actorId ?? null,
+        entity: 'USER',
+        entityId: updated.id,
+        action: 'ROLE_CHANGED',
+        summary: `Papel alterado de ${existing.role} para ${updated.role}`,
+      });
+    }
+
     return this.toAccessProfile(updated);
   }
 
-  private async ensureUserExists(id: string): Promise<void> {
+  private async ensureUserExists(id: string): Promise<User> {
     const existing = await this.prisma.user.findUnique({
       where: {
         id,
-      },
-      select: {
-        id: true,
       },
     });
 
@@ -89,6 +112,8 @@ export class ProfilesService {
         message: 'Perfil nao encontrado',
       });
     }
+
+    return existing;
   }
 
   private handleUniqueConstraint(error: unknown): void {

@@ -23,4 +23,10 @@ describe('Auth utilities', () => {
     expect(payload.role).toBe(UserRole.ADMIN);
     expect(payload.email).toBe('admin@easyvet.local');
   });
+
+  it('rejeita senha fora da politica minima', () => {
+    expect(() => createPasswordHash('1234567')).toThrow(
+      'A senha deve ter ao menos',
+    );
+  });
 });

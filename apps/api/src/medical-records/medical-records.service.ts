@@ -8,13 +8,17 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { AuditEventsService } from '../audit-events/audit-events.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SaveMedicalRecordDraftDto } from './dto/save-medical-record-draft.dto';
 import { FinalizeMedicalRecordDto } from './dto/finalize-medical-record.dto';
 
 @Injectable()
 export class MedicalRecordsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditEvents: AuditEventsService,
+  ) {}
 
   async start(appointmentId: string): Promise<MedicalRecord> {
     await this.ensureAppointmentExists(appointmentId);
@@ -77,6 +81,7 @@ export class MedicalRecordsService {
   async finalize(
     appointmentId: string,
     dto: FinalizeMedicalRecordDto,
+    actorId?: string,
   ): Promise<MedicalRecord> {
     await this.ensureAppointmentExists(appointmentId);
 
@@ -129,6 +134,14 @@ export class MedicalRecordsService {
       data: {
         status: AppointmentStatus.COMPLETED,
       },
+    });
+
+    await this.auditEvents.register({
+      actorId: actorId ?? null,
+      entity: 'MEDICAL_RECORD',
+      entityId: record.id,
+      action: 'MEDICAL_RECORD_FINALIZED',
+      summary: `Prontuario finalizado para consulta ${appointmentId}`,
     });
 
     return record;
