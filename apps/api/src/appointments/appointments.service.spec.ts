@@ -71,6 +71,89 @@ function buildAppointment(
 }
 
 describe('AppointmentsService audit trail', () => {
+  it('consolida metricas de consultas por periodo', async () => {
+    const prisma = {
+      patient: {
+        findFirst: jest.fn(),
+      },
+      clinicScheduleSettings: {
+        upsert: jest.fn(),
+      },
+      appointment: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+        update: jest.fn(),
+        create: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([
+          { status: AppointmentStatus.SCHEDULED, reason: 'Consulta de rotina' },
+          {
+            status: AppointmentStatus.COMPLETED,
+            reason: 'Retorno - Reavaliacao',
+          },
+          { status: AppointmentStatus.NO_SHOW, reason: 'Retorno - Vacina' },
+          { status: AppointmentStatus.CANCELED, reason: 'Consulta geral' },
+        ]),
+      },
+    };
+
+    const auditEvents = {
+      register: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const service = new AppointmentsService(
+      prisma as never,
+      auditEvents as never,
+    );
+
+    const metrics = await service.metrics({
+      dateFrom: '2026-04-01',
+      dateTo: '2026-04-07',
+    });
+
+    expect(metrics.total).toBe(4);
+    expect(metrics.completed).toBe(1);
+    expect(metrics.noShow).toBe(1);
+    expect(metrics.returnAppointments).toBe(2);
+    expect(metrics.noShowRate).toBe(25);
+    expect(metrics.completionRate).toBe(25);
+  });
+
+  it('valida faixa de datas nas metricas', async () => {
+    const prisma = {
+      patient: {
+        findFirst: jest.fn(),
+      },
+      clinicScheduleSettings: {
+        upsert: jest.fn(),
+      },
+      appointment: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+        update: jest.fn(),
+        create: jest.fn(),
+        findMany: jest.fn(),
+      },
+    };
+
+    const auditEvents = {
+      register: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const service = new AppointmentsService(
+      prisma as never,
+      auditEvents as never,
+    );
+
+    await expect(
+      service.metrics({
+        dateFrom: '2026-04-10',
+        dateTo: '2026-04-01',
+      }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+    expect(prisma.appointment.findMany).not.toHaveBeenCalled();
+  });
+
   it('registra evento de auditoria ao remarcar consulta', async () => {
     const previous = buildAppointment();
     const updated = buildAppointment({

@@ -165,6 +165,21 @@ type InactivityScanResult = {
   affectedUsers: InactiveUserCandidate[];
 };
 
+type AppointmentsMetrics = {
+  dateFrom: string;
+  dateTo: string;
+  total: number;
+  scheduled: number;
+  confirmed: number;
+  inProgress: number;
+  completed: number;
+  canceled: number;
+  noShow: number;
+  returnAppointments: number;
+  noShowRate: number;
+  completionRate: number;
+};
+
 type InactivityPolicyFormState = {
   enabled: boolean;
   maxInactiveDays: string;
@@ -416,6 +431,12 @@ function formatDateTime(dateIso: string): string {
   });
 }
 
+function shiftIsoDate(dateIso: string, days: number): string {
+  const date = new Date(`${dateIso}T12:00:00`);
+  date.setDate(date.getDate() + days);
+  return toLocalISODate(date);
+}
+
 function joinDateAndTime(date: string, time: string): string {
   return `${date}T${time}:00`;
 }
@@ -535,6 +556,49 @@ function sortAppointmentsDescending(data: Appointment[]): Appointment[] {
   return [...data].sort((first, second) => {
     return new Date(second.startsAt).getTime() - new Date(first.startsAt).getTime();
   });
+}
+
+function calculateAppointmentsMetrics(
+  data: Appointment[],
+  dateFrom: string,
+  dateTo: string,
+): AppointmentsMetrics {
+  const metrics = {
+    total: data.length,
+    scheduled: data.filter((item) => item.status === 'SCHEDULED').length,
+    confirmed: data.filter((item) => item.status === 'CONFIRMED').length,
+    inProgress: data.filter((item) => item.status === 'IN_PROGRESS').length,
+    completed: data.filter((item) => item.status === 'COMPLETED').length,
+    canceled: data.filter((item) => item.status === 'CANCELED').length,
+    noShow: data.filter((item) => item.status === 'NO_SHOW').length,
+    returnAppointments: data.filter((item) =>
+      item.reason.trim().toLowerCase().startsWith('retorno'),
+    ).length,
+  };
+
+  const noShowRate =
+    metrics.total > 0
+      ? Number(((metrics.noShow / metrics.total) * 100).toFixed(1))
+      : 0;
+  const completionRate =
+    metrics.total > 0
+      ? Number(((metrics.completed / metrics.total) * 100).toFixed(1))
+      : 0;
+
+  return {
+    dateFrom,
+    dateTo,
+    total: metrics.total,
+    scheduled: metrics.scheduled,
+    confirmed: metrics.confirmed,
+    inProgress: metrics.inProgress,
+    completed: metrics.completed,
+    canceled: metrics.canceled,
+    noShow: metrics.noShow,
+    returnAppointments: metrics.returnAppointments,
+    noShowRate,
+    completionRate,
+  };
 }
 
 function mergeUniqueAppointments(
@@ -990,6 +1054,10 @@ export default function Home() {
   const [appointmentsByDate, setAppointmentsByDate] = useState<
     Record<string, Appointment[]>
   >({});
+  const [appointmentsMetricsWindowDays, setAppointmentsMetricsWindowDays] =
+    useState(7);
+  const [appointmentsMetrics, setAppointmentsMetrics] =
+    useState<AppointmentsMetrics | null>(null);
   const [profiles, setProfiles] = useState<AccessProfile[]>([]);
   const [inactivityPolicy, setInactivityPolicy] =
     useState<InactivityPolicySnapshot | null>(null);
@@ -1030,6 +1098,8 @@ export default function Home() {
   const [isInactivityScanRunning, setIsInactivityScanRunning] = useState(false);
   const [isInactivityPolicySaving, setIsInactivityPolicySaving] = useState(false);
   const [isRescheduleSaving, setIsRescheduleSaving] = useState(false);
+  const [isAppointmentsMetricsLoading, setIsAppointmentsMetricsLoading] =
+    useState(false);
   const [isAppointmentSaving, setIsAppointmentSaving] = useState(false);
   const [isPatientSaving, setIsPatientSaving] = useState(false);
   const [isAvailabilityLoading, setIsAvailabilityLoading] = useState(false);
@@ -1645,6 +1715,54 @@ export default function Home() {
     [appointmentsByDate, loadAppointmentsForDate],
   );
 
+  const loadAppointmentsMetrics = useCallback(async () => {
+    if (!authUser) {
+      setAppointmentsMetrics(null);
+      return;
+    }
+
+    const dateTo = selectedDate;
+    const dateFrom = shiftIsoDate(dateTo, -(appointmentsMetricsWindowDays - 1));
+
+    setIsAppointmentsMetricsLoading(true);
+    try {
+      if (isDemoMode) {
+        const rangeStart = new Date(`${dateFrom}T00:00:00`).getTime();
+        const rangeEnd = new Date(`${dateTo}T23:59:59.999`).getTime();
+        const filtered = knownAppointments.filter((appointment) => {
+          const timestamp = new Date(appointment.startsAt).getTime();
+          return timestamp >= rangeStart && timestamp <= rangeEnd;
+        });
+
+        setAppointmentsMetrics(
+          calculateAppointmentsMetrics(filtered, dateFrom, dateTo),
+        );
+        return;
+      }
+
+      const metrics = await request<AppointmentsMetrics>(
+        `/appointments/metrics?dateFrom=${dateFrom}&dateTo=${dateTo}`,
+      );
+      setAppointmentsMetrics(metrics);
+    } catch (error) {
+      setErrorMessage(
+        normalizeErrorMessage(
+          error,
+          'Falha ao carregar indicadores operacionais de consultas.',
+        ),
+      );
+    } finally {
+      setIsAppointmentsMetricsLoading(false);
+    }
+  }, [
+    appointmentsMetricsWindowDays,
+    authUser,
+    isDemoMode,
+    knownAppointments,
+    request,
+    selectedDate,
+  ]);
+
   const patchAppointmentStatusLocally = useCallback(
     (appointmentId: string, status: AppointmentStatus) => {
       setAppointments((current) =>
@@ -2063,6 +2181,14 @@ export default function Home() {
   }, [activeSection, nextFreeSlot, schedulingDate, schedulingDaySummaries]);
 
   useEffect(() => {
+    if (activeSection !== 'consultations') {
+      return;
+    }
+
+    void loadAppointmentsMetrics();
+  }, [activeSection, loadAppointmentsMetrics]);
+
+  useEffect(() => {
     if (activeSection !== 'medicalRecords') {
       return;
     }
@@ -2233,6 +2359,8 @@ export default function Home() {
     setPatients([]);
     setAppointments([]);
     setAppointmentsByDate({});
+    setAppointmentsMetrics(null);
+    setAppointmentsMetricsWindowDays(7);
     setProfiles([]);
     setInactivityPolicy(null);
     setInactivityPolicyForm({
@@ -3987,6 +4115,91 @@ export default function Home() {
                 />
               </div>
 
+              <div className="mt-5 overflow-hidden border border-slate-200 bg-gradient-to-r from-[#0b1d33] via-[#102d4d] to-[#0f3a5a] text-slate-100">
+                <div className="border-b border-white/15 px-5 py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.2em] text-cyan-200/90">
+                        Indicadores operacionais
+                      </p>
+                      <h3 className="mt-2 text-xl font-semibold">
+                        Performance de consultas e aderencia de retorno
+                      </h3>
+                      <p className="mt-1 text-sm text-cyan-100/85">
+                        No-show, taxa de conclusao e retornos na janela selecionada.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {[7, 14, 30].map((windowDays) => {
+                        const active = appointmentsMetricsWindowDays === windowDays;
+
+                        return (
+                          <button
+                            key={`metrics-window-${windowDays}`}
+                            type="button"
+                            onClick={() => setAppointmentsMetricsWindowDays(windowDays)}
+                            className={`rounded-md border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] transition ${
+                              active
+                                ? 'border-cyan-200 bg-cyan-100 text-slate-900'
+                                : 'border-cyan-200/40 bg-transparent text-cyan-100 hover:bg-white/10'
+                            }`}
+                          >
+                            {windowDays} dias
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {isAppointmentsMetricsLoading || !appointmentsMetrics ? (
+                  <p className="px-5 py-6 text-sm text-cyan-100/85">
+                    Atualizando indicadores...
+                  </p>
+                ) : (
+                  <div className="grid gap-3 px-5 py-4 sm:grid-cols-2 xl:grid-cols-6">
+                    <AuditMetricCard
+                      label="Consultas"
+                      value={String(appointmentsMetrics.total)}
+                      tone="neutral"
+                    />
+                    <AuditMetricCard
+                      label="Concluidas"
+                      value={String(appointmentsMetrics.completed)}
+                      tone="positive"
+                    />
+                    <AuditMetricCard
+                      label="No-show"
+                      value={String(appointmentsMetrics.noShow)}
+                      tone={appointmentsMetrics.noShow > 0 ? 'risk' : 'neutral'}
+                    />
+                    <AuditMetricCard
+                      label="Canceladas"
+                      value={String(appointmentsMetrics.canceled)}
+                      tone={appointmentsMetrics.canceled > 0 ? 'risk' : 'neutral'}
+                    />
+                    <AuditMetricCard
+                      label="Retornos"
+                      value={String(appointmentsMetrics.returnAppointments)}
+                      tone="positive"
+                    />
+                    <div className="border border-cyan-200/30 bg-white/10 px-3 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.14em] text-cyan-100/85">
+                        Taxas
+                      </p>
+                      <p className="mt-2 text-2xl font-semibold text-white">
+                        {appointmentsMetrics.noShowRate.toFixed(1)}%
+                      </p>
+                      <p className="mt-1 text-xs text-cyan-100/85">
+                        no-show | {appointmentsMetrics.completionRate.toFixed(1)}%
+                        {' '}conclusao
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="mt-5 overflow-hidden border border-slate-200 bg-white">
                 <div className="border-b border-slate-200 px-5 py-4">
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
@@ -4081,6 +4294,7 @@ export default function Home() {
                                 disabled={
                                   slot.appointment.status === 'COMPLETED' ||
                                   slot.appointment.status === 'CANCELED' ||
+                                  slot.appointment.status === 'NO_SHOW' ||
                                   slot.appointment.status === 'IN_PROGRESS'
                                 }
                               />
@@ -4094,7 +4308,8 @@ export default function Home() {
                                 }
                                 disabled={
                                   slot.appointment.status === 'COMPLETED' ||
-                                  slot.appointment.status === 'CANCELED'
+                                  slot.appointment.status === 'CANCELED' ||
+                                  slot.appointment.status === 'NO_SHOW'
                                 }
                               />
                               <TinyActionButton
@@ -4102,7 +4317,8 @@ export default function Home() {
                                 onClick={() => onStartAttendance(slot.appointment!)}
                                 disabled={
                                   slot.appointment.status === 'COMPLETED' ||
-                                  slot.appointment.status === 'CANCELED'
+                                  slot.appointment.status === 'CANCELED' ||
+                                  slot.appointment.status === 'NO_SHOW'
                                 }
                               />
                               <TinyActionButton
@@ -4116,7 +4332,23 @@ export default function Home() {
                                 highlight
                                 disabled={
                                   slot.appointment.status === 'COMPLETED' ||
-                                  slot.appointment.status === 'CANCELED'
+                                  slot.appointment.status === 'CANCELED' ||
+                                  slot.appointment.status === 'NO_SHOW'
+                                }
+                              />
+                              <TinyActionButton
+                                title="No-show"
+                                onClick={() =>
+                                  void onChangeAppointmentStatus(
+                                    slot.appointment!.id,
+                                    'NO_SHOW',
+                                  )
+                                }
+                                danger
+                                disabled={
+                                  slot.appointment.status === 'COMPLETED' ||
+                                  slot.appointment.status === 'CANCELED' ||
+                                  slot.appointment.status === 'NO_SHOW'
                                 }
                               />
                               <TinyActionButton
@@ -4125,7 +4357,8 @@ export default function Home() {
                                 danger
                                 disabled={
                                   slot.appointment.status === 'COMPLETED' ||
-                                  slot.appointment.status === 'CANCELED'
+                                  slot.appointment.status === 'CANCELED' ||
+                                  slot.appointment.status === 'NO_SHOW'
                                 }
                               />
                             </div>

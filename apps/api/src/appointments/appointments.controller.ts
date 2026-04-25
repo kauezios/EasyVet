@@ -8,6 +8,7 @@
   Query,
 } from '@nestjs/common';
 import { AppointmentsService } from './appointments.service';
+import { AppointmentsMetricsQueryDto } from './dto/appointments-metrics-query.dto';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { ListAppointmentsQueryDto } from './dto/list-appointments-query.dto';
 import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
@@ -25,6 +26,11 @@ export class AppointmentsController {
   @Get()
   list(@Query() query: ListAppointmentsQueryDto) {
     return this.appointmentsService.list(query);
+  }
+
+  @Get('metrics')
+  metrics(@Query() query: AppointmentsMetricsQueryDto) {
+    return this.appointmentsService.metrics(query);
   }
 
   @Get(':id')

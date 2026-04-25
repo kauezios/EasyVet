@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { AuditEventsService } from '../audit-events/audit-events.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AppointmentsMetricsQueryDto } from './dto/appointments-metrics-query.dto';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { ListAppointmentsQueryDto } from './dto/list-appointments-query.dto';
 import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
@@ -22,6 +23,22 @@ const DEFAULT_CONSULTATION_DURATION_MINUTES = 30;
 const DEFAULT_OPENING_TIME = '08:00';
 const DEFAULT_CLOSING_TIME = '18:00';
 const RETURN_SEARCH_DAYS_LIMIT = 30;
+const DEFAULT_METRICS_WINDOW_DAYS = 7;
+
+export type AppointmentsMetrics = {
+  dateFrom: string;
+  dateTo: string;
+  total: number;
+  scheduled: number;
+  confirmed: number;
+  inProgress: number;
+  completed: number;
+  canceled: number;
+  noShow: number;
+  returnAppointments: number;
+  noShowRate: number;
+  completionRate: number;
+};
 
 @Injectable()
 export class AppointmentsService {
@@ -137,6 +154,64 @@ export class AppointmentsService {
         },
       },
     });
+  }
+
+  async metrics(
+    query: AppointmentsMetricsQueryDto,
+  ): Promise<AppointmentsMetrics> {
+    const { dateFromKey, dateToKey, startsAt, endsAt } =
+      this.resolveMetricsRange(query);
+
+    const rows = await this.prisma.appointment.findMany({
+      where: {
+        startsAt: {
+          gte: startsAt,
+          lte: endsAt,
+        },
+      },
+      select: {
+        status: true,
+        reason: true,
+      },
+    });
+
+    const metrics = {
+      total: rows.length,
+      scheduled: rows.filter(
+        (row) => row.status === AppointmentStatus.SCHEDULED,
+      ).length,
+      confirmed: rows.filter(
+        (row) => row.status === AppointmentStatus.CONFIRMED,
+      ).length,
+      inProgress: rows.filter(
+        (row) => row.status === AppointmentStatus.IN_PROGRESS,
+      ).length,
+      completed: rows.filter(
+        (row) => row.status === AppointmentStatus.COMPLETED,
+      ).length,
+      canceled: rows.filter((row) => row.status === AppointmentStatus.CANCELED)
+        .length,
+      noShow: rows.filter((row) => row.status === AppointmentStatus.NO_SHOW)
+        .length,
+      returnAppointments: rows.filter((row) =>
+        row.reason.trim().toLowerCase().startsWith('retorno'),
+      ).length,
+    };
+
+    return {
+      dateFrom: dateFromKey,
+      dateTo: dateToKey,
+      total: metrics.total,
+      scheduled: metrics.scheduled,
+      confirmed: metrics.confirmed,
+      inProgress: metrics.inProgress,
+      completed: metrics.completed,
+      canceled: metrics.canceled,
+      noShow: metrics.noShow,
+      returnAppointments: metrics.returnAppointments,
+      noShowRate: this.percent(metrics.noShow, metrics.total),
+      completionRate: this.percent(metrics.completed, metrics.total),
+    };
   }
 
   async findOne(id: string) {
@@ -373,6 +448,40 @@ export class AppointmentsService {
     return created;
   }
 
+  private resolveMetricsRange(query: AppointmentsMetricsQueryDto): {
+    dateFromKey: string;
+    dateToKey: string;
+    startsAt: Date;
+    endsAt: Date;
+  } {
+    const today = new Date();
+    const todayKey = today.toISOString().slice(0, 10);
+
+    const dateToKey = query.dateTo ?? todayKey;
+    const dateToBase = new Date(`${dateToKey}T12:00:00`);
+
+    const fallbackFrom = new Date(dateToBase);
+    fallbackFrom.setDate(
+      dateToBase.getDate() - (DEFAULT_METRICS_WINDOW_DAYS - 1),
+    );
+    const dateFromKey =
+      query.dateFrom ?? fallbackFrom.toISOString().slice(0, 10);
+
+    if (dateFromKey > dateToKey) {
+      throw new UnprocessableEntityException({
+        code: 'APPOINTMENT_METRICS_INVALID_RANGE',
+        message: 'A data inicial precisa ser menor ou igual a data final',
+      });
+    }
+
+    return {
+      dateFromKey,
+      dateToKey,
+      startsAt: new Date(`${dateFromKey}T00:00:00`),
+      endsAt: new Date(`${dateToKey}T23:59:59.999`),
+    };
+  }
+
   private validateDateRange(startsAt: Date, endsAt: Date): void {
     if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) {
       throw new UnprocessableEntityException({
@@ -387,6 +496,14 @@ export class AppointmentsService {
         message: 'Horario inicial deve ser menor que o horario final',
       });
     }
+  }
+
+  private percent(value: number, total: number): number {
+    if (total <= 0) {
+      return 0;
+    }
+
+    return Number(((value / total) * 100).toFixed(1));
   }
 
   private async ensureNoScheduleConflict(
