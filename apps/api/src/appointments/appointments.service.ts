@@ -5,6 +5,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { AuditEventsService } from '../audit-events/audit-events.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { ListAppointmentsQueryDto } from './dto/list-appointments-query.dto';
@@ -19,7 +20,10 @@ const ACTIVE_STATUSES: AppointmentStatus[] = [
 
 @Injectable()
 export class AppointmentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditEvents: AuditEventsService,
+  ) {}
 
   async create(dto: CreateAppointmentDto) {
     const patient = await this.prisma.patient.findFirst({
@@ -182,7 +186,7 @@ export class AppointmentsService {
       appointment.id,
     );
 
-    return this.prisma.appointment.update({
+    const updated = await this.prisma.appointment.update({
       where: { id },
       data: {
         startsAt,
@@ -207,6 +211,16 @@ export class AppointmentsService {
         },
       },
     });
+
+    await this.auditEvents.register({
+      actorId: null,
+      entity: 'APPOINTMENT',
+      entityId: updated.id,
+      action: 'APPOINTMENT_RESCHEDULED',
+      summary: this.buildRescheduleAuditSummary(appointment, updated),
+    });
+
+    return updated;
   }
 
   async updateStatus(id: string, dto: UpdateAppointmentStatusDto) {
@@ -293,5 +307,27 @@ export class AppointmentsService {
         message: 'Veterinario ja possui consulta neste intervalo de horario',
       });
     }
+  }
+
+  private buildRescheduleAuditSummary(
+    previous: {
+      startsAt: Date;
+      endsAt: Date;
+      veterinarianName: string;
+    },
+    updated: {
+      startsAt: Date;
+      endsAt: Date;
+      veterinarianName: string;
+    },
+  ): string {
+    const previousWindow = `${previous.startsAt.toISOString()} - ${previous.endsAt.toISOString()}`;
+    const updatedWindow = `${updated.startsAt.toISOString()} - ${updated.endsAt.toISOString()}`;
+
+    if (previous.veterinarianName === updated.veterinarianName) {
+      return `Consulta remarcada de ${previousWindow} para ${updatedWindow}`;
+    }
+
+    return `Consulta remarcada de ${previousWindow} para ${updatedWindow}; veterinario alterado de ${previous.veterinarianName} para ${updated.veterinarianName}`;
   }
 }
