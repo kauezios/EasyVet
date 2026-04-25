@@ -8,6 +8,7 @@ import {
 import { AuditEventsService } from '../audit-events/audit-events.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppointmentsMetricsQueryDto } from './dto/appointments-metrics-query.dto';
+import { AppointmentsWeeklyTrendQueryDto } from './dto/appointments-weekly-trend-query.dto';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { ListAppointmentsQueryDto } from './dto/list-appointments-query.dto';
 import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
@@ -24,6 +25,9 @@ const DEFAULT_OPENING_TIME = '08:00';
 const DEFAULT_CLOSING_TIME = '18:00';
 const RETURN_SEARCH_DAYS_LIMIT = 30;
 const DEFAULT_METRICS_WINDOW_DAYS = 7;
+const DEFAULT_WEEKLY_TREND_WEEKS = 6;
+const MIN_WEEKLY_TREND_WEEKS = 2;
+const MAX_WEEKLY_TREND_WEEKS = 12;
 
 export type AppointmentsMetrics = {
   dateFrom: string;
@@ -36,8 +40,26 @@ export type AppointmentsMetrics = {
   canceled: number;
   noShow: number;
   returnAppointments: number;
+  returnRate: number;
   noShowRate: number;
   completionRate: number;
+};
+
+export type AppointmentsWeeklyTrendPoint = {
+  weekStart: string;
+  weekEnd: string;
+  total: number;
+  noShow: number;
+  canceled: number;
+  noShowRate: number;
+  canceledRate: number;
+};
+
+export type AppointmentsWeeklyTrend = {
+  dateFrom: string;
+  dateTo: string;
+  weeks: number;
+  trend: AppointmentsWeeklyTrendPoint[];
 };
 
 @Injectable()
@@ -209,8 +231,69 @@ export class AppointmentsService {
       canceled: metrics.canceled,
       noShow: metrics.noShow,
       returnAppointments: metrics.returnAppointments,
+      returnRate: this.percent(metrics.returnAppointments, metrics.total),
       noShowRate: this.percent(metrics.noShow, metrics.total),
       completionRate: this.percent(metrics.completed, metrics.total),
+    };
+  }
+
+  async weeklyTrend(
+    query: AppointmentsWeeklyTrendQueryDto,
+  ): Promise<AppointmentsWeeklyTrend> {
+    const { dateFromKey, dateToKey, weeks, startsAt, endsAt } =
+      this.resolveWeeklyTrendRange(query);
+
+    const rows = await this.prisma.appointment.findMany({
+      where: {
+        startsAt: {
+          gte: startsAt,
+          lte: endsAt,
+        },
+      },
+      select: {
+        startsAt: true,
+        status: true,
+      },
+    });
+
+    const trend: AppointmentsWeeklyTrendPoint[] = [];
+
+    for (let bucketIndex = weeks - 1; bucketIndex >= 0; bucketIndex -= 1) {
+      const weekEnd = this.shiftDateKey(dateToKey, -(bucketIndex * 7));
+      const weekStart = this.shiftDateKey(weekEnd, -6);
+      const weekStartAt = new Date(`${weekStart}T00:00:00`);
+      const weekEndAt = new Date(`${weekEnd}T23:59:59.999`);
+
+      const bucketRows = rows.filter(
+        (row) =>
+          row.startsAt.getTime() >= weekStartAt.getTime() &&
+          row.startsAt.getTime() <= weekEndAt.getTime(),
+      );
+
+      const total = bucketRows.length;
+      const noShow = bucketRows.filter(
+        (row) => row.status === AppointmentStatus.NO_SHOW,
+      ).length;
+      const canceled = bucketRows.filter(
+        (row) => row.status === AppointmentStatus.CANCELED,
+      ).length;
+
+      trend.push({
+        weekStart,
+        weekEnd,
+        total,
+        noShow,
+        canceled,
+        noShowRate: this.percent(noShow, total),
+        canceledRate: this.percent(canceled, total),
+      });
+    }
+
+    return {
+      dateFrom: dateFromKey,
+      dateTo: dateToKey,
+      weeks,
+      trend,
     };
   }
 
@@ -482,6 +565,42 @@ export class AppointmentsService {
     };
   }
 
+  private resolveWeeklyTrendRange(query: AppointmentsWeeklyTrendQueryDto): {
+    dateFromKey: string;
+    dateToKey: string;
+    weeks: number;
+    startsAt: Date;
+    endsAt: Date;
+  } {
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const dateToKey = query.dateTo ?? todayKey;
+
+    const parsedWeeks = query.weeks
+      ? Number.parseInt(query.weeks, 10)
+      : DEFAULT_WEEKLY_TREND_WEEKS;
+
+    if (
+      Number.isNaN(parsedWeeks) ||
+      parsedWeeks < MIN_WEEKLY_TREND_WEEKS ||
+      parsedWeeks > MAX_WEEKLY_TREND_WEEKS
+    ) {
+      throw new UnprocessableEntityException({
+        code: 'APPOINTMENT_WEEKLY_TREND_INVALID_WEEKS',
+        message: `A janela semanal deve ficar entre ${MIN_WEEKLY_TREND_WEEKS} e ${MAX_WEEKLY_TREND_WEEKS}`,
+      });
+    }
+
+    const dateFromKey = this.shiftDateKey(dateToKey, -(parsedWeeks * 7 - 1));
+
+    return {
+      dateFromKey,
+      dateToKey,
+      weeks: parsedWeeks,
+      startsAt: new Date(`${dateFromKey}T00:00:00`),
+      endsAt: new Date(`${dateToKey}T23:59:59.999`),
+    };
+  }
+
   private validateDateRange(startsAt: Date, endsAt: Date): void {
     if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) {
       throw new UnprocessableEntityException({
@@ -666,5 +785,11 @@ export class AppointmentsService {
     return new Date(
       `${dayKey}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`,
     );
+  }
+
+  private shiftDateKey(dateKey: string, days: number): string {
+    const date = new Date(`${dateKey}T12:00:00`);
+    date.setDate(date.getDate() + days);
+    return date.toISOString().slice(0, 10);
   }
 }

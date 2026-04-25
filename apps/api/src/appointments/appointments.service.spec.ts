@@ -114,6 +114,7 @@ describe('AppointmentsService audit trail', () => {
     expect(metrics.completed).toBe(1);
     expect(metrics.noShow).toBe(1);
     expect(metrics.returnAppointments).toBe(2);
+    expect(metrics.returnRate).toBe(50);
     expect(metrics.noShowRate).toBe(25);
     expect(metrics.completionRate).toBe(25);
   });
@@ -148,6 +149,120 @@ describe('AppointmentsService audit trail', () => {
       service.metrics({
         dateFrom: '2026-04-10',
         dateTo: '2026-04-01',
+      }),
+    ).rejects.toBeInstanceOf(UnprocessableEntityException);
+
+    expect(prisma.appointment.findMany).not.toHaveBeenCalled();
+  });
+
+  it('consolida tendencia semanal de no-show e cancelamento', async () => {
+    const prisma = {
+      patient: {
+        findFirst: jest.fn(),
+      },
+      clinicScheduleSettings: {
+        upsert: jest.fn(),
+      },
+      appointment: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+        update: jest.fn(),
+        create: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([
+          {
+            startsAt: new Date('2026-04-02T09:00:00.000Z'),
+            status: AppointmentStatus.NO_SHOW,
+          },
+          {
+            startsAt: new Date('2026-04-03T10:00:00.000Z'),
+            status: AppointmentStatus.CANCELED,
+          },
+          {
+            startsAt: new Date('2026-04-09T08:00:00.000Z'),
+            status: AppointmentStatus.NO_SHOW,
+          },
+          {
+            startsAt: new Date('2026-04-10T11:00:00.000Z'),
+            status: AppointmentStatus.COMPLETED,
+          },
+          {
+            startsAt: new Date('2026-04-11T13:00:00.000Z'),
+            status: AppointmentStatus.CANCELED,
+          },
+        ]),
+      },
+    };
+
+    const auditEvents = {
+      register: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const service = new AppointmentsService(
+      prisma as never,
+      auditEvents as never,
+    );
+
+    const weeklyTrend = await service.weeklyTrend({
+      dateTo: '2026-04-14',
+      weeks: '2',
+    });
+
+    expect(weeklyTrend.weeks).toBe(2);
+    expect(weeklyTrend.trend).toHaveLength(2);
+    expect(weeklyTrend.trend[0]).toEqual(
+      expect.objectContaining({
+        weekStart: '2026-04-01',
+        weekEnd: '2026-04-07',
+        total: 2,
+        noShow: 1,
+        canceled: 1,
+        noShowRate: 50,
+        canceledRate: 50,
+      }),
+    );
+    expect(weeklyTrend.trend[1]).toEqual(
+      expect.objectContaining({
+        weekStart: '2026-04-08',
+        weekEnd: '2026-04-14',
+        total: 3,
+        noShow: 1,
+        canceled: 1,
+        noShowRate: 33.3,
+        canceledRate: 33.3,
+      }),
+    );
+  });
+
+  it('valida janela semanal de tendencia', async () => {
+    const prisma = {
+      patient: {
+        findFirst: jest.fn(),
+      },
+      clinicScheduleSettings: {
+        upsert: jest.fn(),
+      },
+      appointment: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn(),
+        update: jest.fn(),
+        create: jest.fn(),
+        findMany: jest.fn(),
+      },
+    };
+
+    const auditEvents = {
+      register: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const service = new AppointmentsService(
+      prisma as never,
+      auditEvents as never,
+    );
+
+    await expect(
+      service.weeklyTrend({
+        dateTo: '2026-04-10',
+        weeks: '20',
       }),
     ).rejects.toBeInstanceOf(UnprocessableEntityException);
 

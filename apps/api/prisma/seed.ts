@@ -23,12 +23,14 @@ async function main() {
       consultationDurationMinutes: 30,
       openingTime: '08:00',
       closingTime: '18:00',
+      returnRateTargetPercent: 35,
     },
     create: {
       id: 'default',
       consultationDurationMinutes: 30,
       openingTime: '08:00',
       closingTime: '18:00',
+      returnRateTargetPercent: 35,
     },
   });
 

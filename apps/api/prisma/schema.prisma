@@ -152,6 +152,7 @@ model ClinicScheduleSettings {
   consultationDurationMinutes Int      @default(30)
   openingTime                 String   @default("08:00")
   closingTime                 String   @default("18:00")
+  returnRateTargetPercent     Int      @default(35)
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
 }

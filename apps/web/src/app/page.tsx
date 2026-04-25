@@ -176,8 +176,26 @@ type AppointmentsMetrics = {
   canceled: number;
   noShow: number;
   returnAppointments: number;
+  returnRate: number;
   noShowRate: number;
   completionRate: number;
+};
+
+type AppointmentsWeeklyTrendPoint = {
+  weekStart: string;
+  weekEnd: string;
+  total: number;
+  noShow: number;
+  canceled: number;
+  noShowRate: number;
+  canceledRate: number;
+};
+
+type AppointmentsWeeklyTrend = {
+  dateFrom: string;
+  dateTo: string;
+  weeks: number;
+  trend: AppointmentsWeeklyTrendPoint[];
 };
 
 type InactivityPolicyFormState = {
@@ -221,6 +239,7 @@ type ClinicScheduleSettings = {
   consultationDurationMinutes: number;
   openingTime: string;
   closingTime: string;
+  returnRateTargetPercent: number;
 };
 
 type SlotAvailability = {
@@ -373,6 +392,7 @@ const DEFAULT_CLINIC_SETTINGS: ClinicScheduleSettings = {
   consultationDurationMinutes: 30,
   openingTime: '08:00',
   closingTime: '18:00',
+  returnRateTargetPercent: 35,
 };
 
 function toLocalISODate(date: Date): string {
@@ -498,7 +518,8 @@ function clinicSettingsAreEqual(
   return (
     first.consultationDurationMinutes === second.consultationDurationMinutes &&
     first.openingTime === second.openingTime &&
-    first.closingTime === second.closingTime
+    first.closingTime === second.closingTime &&
+    first.returnRateTargetPercent === second.returnRateTargetPercent
   );
 }
 
@@ -584,6 +605,10 @@ function calculateAppointmentsMetrics(
     metrics.total > 0
       ? Number(((metrics.completed / metrics.total) * 100).toFixed(1))
       : 0;
+  const returnRate =
+    metrics.total > 0
+      ? Number(((metrics.returnAppointments / metrics.total) * 100).toFixed(1))
+      : 0;
 
   return {
     dateFrom,
@@ -596,8 +621,66 @@ function calculateAppointmentsMetrics(
     canceled: metrics.canceled,
     noShow: metrics.noShow,
     returnAppointments: metrics.returnAppointments,
+    returnRate,
     noShowRate,
     completionRate,
+  };
+}
+
+function formatWeeklyTrendLabel(point: AppointmentsWeeklyTrendPoint): string {
+  const start = new Date(`${point.weekStart}T12:00:00`);
+  const end = new Date(`${point.weekEnd}T12:00:00`);
+  const startLabel = new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+  }).format(start);
+  const endLabel = new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+  }).format(end);
+
+  return `${startLabel} - ${endLabel}`;
+}
+
+function calculateWeeklyTrend(
+  data: Appointment[],
+  dateTo: string,
+  weeks: number,
+): AppointmentsWeeklyTrend {
+  const trend: AppointmentsWeeklyTrendPoint[] = [];
+
+  for (let index = weeks - 1; index >= 0; index -= 1) {
+    const weekEnd = shiftIsoDate(dateTo, -(index * 7));
+    const weekStart = shiftIsoDate(weekEnd, -6);
+    const weekStartAt = new Date(`${weekStart}T00:00:00`).getTime();
+    const weekEndAt = new Date(`${weekEnd}T23:59:59.999`).getTime();
+
+    const rows = data.filter((item) => {
+      const startsAt = new Date(item.startsAt).getTime();
+      return startsAt >= weekStartAt && startsAt <= weekEndAt;
+    });
+
+    const total = rows.length;
+    const noShow = rows.filter((item) => item.status === 'NO_SHOW').length;
+    const canceled = rows.filter((item) => item.status === 'CANCELED').length;
+
+    trend.push({
+      weekStart,
+      weekEnd,
+      total,
+      noShow,
+      canceled,
+      noShowRate: total > 0 ? Number(((noShow / total) * 100).toFixed(1)) : 0,
+      canceledRate:
+        total > 0 ? Number(((canceled / total) * 100).toFixed(1)) : 0,
+    });
+  }
+
+  return {
+    dateFrom: trend[0]?.weekStart ?? dateTo,
+    dateTo,
+    weeks,
+    trend,
   };
 }
 
@@ -1058,6 +1141,9 @@ export default function Home() {
     useState(7);
   const [appointmentsMetrics, setAppointmentsMetrics] =
     useState<AppointmentsMetrics | null>(null);
+  const [appointmentsTrendWeeks, setAppointmentsTrendWeeks] = useState(6);
+  const [appointmentsWeeklyTrend, setAppointmentsWeeklyTrend] =
+    useState<AppointmentsWeeklyTrend | null>(null);
   const [profiles, setProfiles] = useState<AccessProfile[]>([]);
   const [inactivityPolicy, setInactivityPolicy] =
     useState<InactivityPolicySnapshot | null>(null);
@@ -1099,6 +1185,8 @@ export default function Home() {
   const [isInactivityPolicySaving, setIsInactivityPolicySaving] = useState(false);
   const [isRescheduleSaving, setIsRescheduleSaving] = useState(false);
   const [isAppointmentsMetricsLoading, setIsAppointmentsMetricsLoading] =
+    useState(false);
+  const [isAppointmentsTrendLoading, setIsAppointmentsTrendLoading] =
     useState(false);
   const [isAppointmentSaving, setIsAppointmentSaving] = useState(false);
   const [isPatientSaving, setIsPatientSaving] = useState(false);
@@ -1393,6 +1481,35 @@ export default function Home() {
       finished,
     };
   }, [appointments]);
+
+  const weeklyTrendScale = useMemo(() => {
+    if (!appointmentsWeeklyTrend || appointmentsWeeklyTrend.trend.length === 0) {
+      return 1;
+    }
+
+    const maxTotal = Math.max(
+      ...appointmentsWeeklyTrend.trend.map((point) => point.total),
+    );
+
+    return Math.max(1, maxTotal);
+  }, [appointmentsWeeklyTrend]);
+
+  const returnRateAlert = useMemo(() => {
+    if (!appointmentsMetrics) {
+      return null;
+    }
+
+    const target = clinicSettings.returnRateTargetPercent;
+    const gap = Number((target - appointmentsMetrics.returnRate).toFixed(1));
+    const belowTarget = gap > 0;
+
+    return {
+      target,
+      current: appointmentsMetrics.returnRate,
+      belowTarget,
+      gap: Math.abs(gap),
+    };
+  }, [appointmentsMetrics, clinicSettings.returnRateTargetPercent]);
 
   const profileMetrics = useMemo(() => {
     const total = profiles.length;
@@ -1756,6 +1873,44 @@ export default function Home() {
     }
   }, [
     appointmentsMetricsWindowDays,
+    authUser,
+    isDemoMode,
+    knownAppointments,
+    request,
+    selectedDate,
+  ]);
+
+  const loadAppointmentsWeeklyTrend = useCallback(async () => {
+    if (!authUser) {
+      setAppointmentsWeeklyTrend(null);
+      return;
+    }
+
+    setIsAppointmentsTrendLoading(true);
+    try {
+      if (isDemoMode) {
+        setAppointmentsWeeklyTrend(
+          calculateWeeklyTrend(knownAppointments, selectedDate, appointmentsTrendWeeks),
+        );
+        return;
+      }
+
+      const trend = await request<AppointmentsWeeklyTrend>(
+        `/appointments/metrics/weekly?dateTo=${selectedDate}&weeks=${appointmentsTrendWeeks}`,
+      );
+      setAppointmentsWeeklyTrend(trend);
+    } catch (error) {
+      setErrorMessage(
+        normalizeErrorMessage(
+          error,
+          'Falha ao carregar tendencia semanal de no-show e cancelamento.',
+        ),
+      );
+    } finally {
+      setIsAppointmentsTrendLoading(false);
+    }
+  }, [
+    appointmentsTrendWeeks,
     authUser,
     isDemoMode,
     knownAppointments,
@@ -2186,7 +2341,8 @@ export default function Home() {
     }
 
     void loadAppointmentsMetrics();
-  }, [activeSection, loadAppointmentsMetrics]);
+    void loadAppointmentsWeeklyTrend();
+  }, [activeSection, loadAppointmentsMetrics, loadAppointmentsWeeklyTrend]);
 
   useEffect(() => {
     if (activeSection !== 'medicalRecords') {
@@ -2361,6 +2517,8 @@ export default function Home() {
     setAppointmentsByDate({});
     setAppointmentsMetrics(null);
     setAppointmentsMetricsWindowDays(7);
+    setAppointmentsTrendWeeks(6);
+    setAppointmentsWeeklyTrend(null);
     setProfiles([]);
     setInactivityPolicy(null);
     setInactivityPolicyForm({
@@ -3223,6 +3381,7 @@ export default function Home() {
               clinicSettings.consultationDurationMinutes,
             openingTime: clinicSettings.openingTime,
             closingTime: clinicSettings.closingTime,
+            returnRateTargetPercent: clinicSettings.returnRateTargetPercent,
           }),
         },
       );
@@ -4193,11 +4352,156 @@ export default function Home() {
                       </p>
                       <p className="mt-1 text-xs text-cyan-100/85">
                         no-show | {appointmentsMetrics.completionRate.toFixed(1)}%
-                        {' '}conclusao
+                        {' '}conclusao | {appointmentsMetrics.returnRate.toFixed(1)}%
+                        {' '}retorno
                       </p>
                     </div>
                   </div>
                 )}
+              </div>
+
+              <div className="mt-5 grid gap-5 xl:grid-cols-[1.45fr_1fr]">
+                <div className="overflow-hidden border border-slate-200 bg-white">
+                  <div className="border-b border-slate-200 px-5 py-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                          Tendencia semanal
+                        </p>
+                        <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                          Evolucao de no-show e cancelamentos
+                        </h3>
+                        <p className="mt-1 text-sm text-slate-600">
+                          Leitura consolidada por semana para orientar acao da recepcao.
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {[4, 6, 8, 12].map((weeks) => {
+                          const active = appointmentsTrendWeeks === weeks;
+
+                          return (
+                            <button
+                              key={`trend-weeks-${weeks}`}
+                              type="button"
+                              onClick={() => setAppointmentsTrendWeeks(weeks)}
+                              className={`rounded-md border px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.14em] transition ${
+                                active
+                                  ? 'border-teal-600 bg-teal-600 text-white'
+                                  : 'border-slate-300 text-slate-700 hover:bg-slate-100'
+                              }`}
+                            >
+                              {weeks} sem
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {isAppointmentsTrendLoading || !appointmentsWeeklyTrend ? (
+                    <p className="px-5 py-6 text-sm text-slate-600">
+                      Atualizando tendencia semanal...
+                    </p>
+                  ) : appointmentsWeeklyTrend.trend.length === 0 ? (
+                    <p className="px-5 py-6 text-sm text-slate-600">
+                      Sem historico suficiente para montar tendencia.
+                    </p>
+                  ) : (
+                    <div className="divide-y divide-slate-200">
+                      {appointmentsWeeklyTrend.trend.map((point, index) => {
+                        const totalWidth = Math.max(
+                          6,
+                          (point.total / weeklyTrendScale) * 100,
+                        );
+
+                        return (
+                          <div
+                            key={`${point.weekStart}-${point.weekEnd}`}
+                            className="trend-row px-5 py-3"
+                            style={{ animationDelay: `${index * 55}ms` }}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-sm font-semibold text-slate-900">
+                                {formatWeeklyTrendLabel(point)}
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                {point.total} consultas | {point.noShowRate.toFixed(1)}%
+                                {' '}no-show | {point.canceledRate.toFixed(1)}% canceladas
+                              </p>
+                            </div>
+
+                            <div className="mt-2 h-2.5 rounded-full bg-slate-100">
+                              <div
+                                className="h-full rounded-full bg-gradient-to-r from-teal-500 to-cyan-500"
+                                style={{ width: `${totalWidth}%` }}
+                              />
+                            </div>
+
+                            <div className="mt-2 grid gap-2 text-[11px] uppercase tracking-[0.14em] text-slate-500 sm:grid-cols-2">
+                              <div className="flex items-center gap-2">
+                                <span className="h-2 w-2 rounded-full bg-fuchsia-500" />
+                                No-show: {point.noShow}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="h-2 w-2 rounded-full bg-rose-500" />
+                                Canceladas: {point.canceled}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="overflow-hidden border border-slate-200 bg-white">
+                  <div className="border-b border-slate-200 px-5 py-4">
+                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                      Alerta operacional
+                    </p>
+                    <h3 className="mt-2 text-lg font-semibold text-slate-900">
+                      Meta de retorno da clinica
+                    </h3>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Meta atual: {clinicSettings.returnRateTargetPercent}% de consultas de retorno.
+                    </p>
+                  </div>
+
+                  {isAppointmentsMetricsLoading || !returnRateAlert ? (
+                    <p className="px-5 py-6 text-sm text-slate-600">
+                      Aguardando consolidacao de taxa de retorno...
+                    </p>
+                  ) : returnRateAlert.belowTarget ? (
+                    <div className="operational-alert px-5 py-5">
+                      <p className="text-xs uppercase tracking-[0.16em] text-rose-700">
+                        Abaixo da meta
+                      </p>
+                      <p className="mt-2 text-3xl font-semibold text-rose-700">
+                        {returnRateAlert.current.toFixed(1)}%
+                      </p>
+                      <p className="mt-2 text-sm text-rose-700">
+                        Faltam {returnRateAlert.gap.toFixed(1)} pontos percentuais para
+                        atingir {returnRateAlert.target}% na janela atual.
+                      </p>
+                      <p className="mt-3 text-xs text-rose-700/90">
+                        Recomendacao: revisar pacientes com prontuario finalizado e retorno sugerido.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="px-5 py-5">
+                      <p className="text-xs uppercase tracking-[0.16em] text-emerald-700">
+                        Meta atendida
+                      </p>
+                      <p className="mt-2 text-3xl font-semibold text-emerald-700">
+                        {returnRateAlert.current.toFixed(1)}%
+                      </p>
+                      <p className="mt-2 text-sm text-emerald-700">
+                        Taxa de retorno acima da meta operacional de {returnRateAlert.target}%.
+                      </p>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="mt-5 overflow-hidden border border-slate-200 bg-white">
@@ -5936,6 +6240,33 @@ export default function Home() {
                     />
                   </label>
 
+                  <label className="grid gap-1.5 text-sm text-slate-700">
+                    Meta minima de retornos (%)
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={clinicSettings.returnRateTargetPercent}
+                      disabled={isClinicSettingsSaving}
+                      onChange={(event) => {
+                        const parsed = Number(event.target.value);
+                        if (!Number.isFinite(parsed)) {
+                          return;
+                        }
+
+                        setClinicSettings((current) => ({
+                          ...current,
+                          returnRateTargetPercent: Math.min(
+                            100,
+                            Math.max(0, Math.round(parsed)),
+                          ),
+                        }));
+                      }}
+                      className="rounded-md border border-slate-300 px-3 py-2 text-sm outline-none ring-2 ring-transparent transition focus:border-teal-500 focus:ring-teal-200"
+                    />
+                  </label>
+
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="grid gap-1.5 text-sm text-slate-700">
                       Inicio de expediente
@@ -6037,6 +6368,12 @@ export default function Home() {
                     Janelas de horario: {' '}
                     <span className="font-semibold">
                       {clinicSettings.openingTime} ate {clinicSettings.closingTime}
+                    </span>
+                  </li>
+                  <li>
+                    Meta de retorno operacional: {' '}
+                    <span className="font-semibold">
+                      {clinicSettings.returnRateTargetPercent}%
                     </span>
                   </li>
                   <li>

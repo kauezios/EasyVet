@@ -73,6 +73,16 @@ type AuditEventEntity = {
   createdAt: Date;
 };
 
+type ClinicScheduleSettingsEntity = {
+  id: string;
+  consultationDurationMinutes: number;
+  openingTime: string;
+  closingTime: string;
+  returnRateTargetPercent: number;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 function copyEntity<T extends object>(entity: T): T {
   return { ...entity };
 }
@@ -100,6 +110,7 @@ export function createInMemoryPrisma() {
   const appointments: AppointmentEntity[] = [];
   const medicalRecords: MedicalRecordEntity[] = [];
   const auditEvents: AuditEventEntity[] = [];
+  let clinicScheduleSettings: ClinicScheduleSettingsEntity | null = null;
 
   let sequence = 0;
   const createId = (prefix: string) => `${prefix}-${++sequence}`;
@@ -554,6 +565,59 @@ export function createInMemoryPrisma() {
         }
 
         return ordered.map((item) => copyEntity(item));
+      },
+    },
+
+    clinicScheduleSettings: {
+      upsert: async ({
+        where,
+        update,
+        create,
+      }: {
+        where: { id: string };
+        update: Partial<ClinicScheduleSettingsEntity>;
+        create: Partial<ClinicScheduleSettingsEntity>;
+      }) => {
+        if (!clinicScheduleSettings) {
+          const now = new Date();
+          clinicScheduleSettings = {
+            id: create.id ?? where.id,
+            consultationDurationMinutes:
+              create.consultationDurationMinutes ?? 30,
+            openingTime: create.openingTime ?? '08:00',
+            closingTime: create.closingTime ?? '18:00',
+            returnRateTargetPercent: create.returnRateTargetPercent ?? 35,
+            createdAt: now,
+            updatedAt: now,
+          };
+        } else {
+          clinicScheduleSettings = {
+            ...clinicScheduleSettings,
+            ...update,
+            updatedAt: new Date(),
+          };
+        }
+
+        return copyEntity(clinicScheduleSettings);
+      },
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { id: string };
+        data: Partial<ClinicScheduleSettingsEntity>;
+      }) => {
+        if (!clinicScheduleSettings || clinicScheduleSettings.id !== where.id) {
+          throw new Error('Clinic settings not found');
+        }
+
+        clinicScheduleSettings = {
+          ...clinicScheduleSettings,
+          ...data,
+          updatedAt: new Date(),
+        };
+
+        return copyEntity(clinicScheduleSettings);
       },
     },
 

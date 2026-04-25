@@ -9,6 +9,7 @@ export type ClinicScheduleSettingsOutput = {
   consultationDurationMinutes: number;
   openingTime: string;
   closingTime: string;
+  returnRateTargetPercent: number;
 };
 
 @Injectable()
@@ -30,6 +31,8 @@ export class ClinicSettingsService {
         dto.consultationDurationMinutes ?? current.consultationDurationMinutes,
       openingTime: dto.openingTime ?? current.openingTime,
       closingTime: dto.closingTime ?? current.closingTime,
+      returnRateTargetPercent:
+        dto.returnRateTargetPercent ?? current.returnRateTargetPercent,
     };
 
     this.validateSchedule(next);
@@ -55,6 +58,7 @@ export class ClinicSettingsService {
         consultationDurationMinutes: 30,
         openingTime: '08:00',
         closingTime: '18:00',
+        returnRateTargetPercent: 35,
       },
     });
   }
@@ -105,6 +109,7 @@ export class ClinicSettingsService {
       consultationDurationMinutes: settings.consultationDurationMinutes,
       openingTime: settings.openingTime,
       closingTime: settings.closingTime,
+      returnRateTargetPercent: settings.returnRateTargetPercent,
     };
   }
 }

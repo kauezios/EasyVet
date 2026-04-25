@@ -58,6 +58,27 @@ button {
   }
 }
 
+@keyframes trendReveal {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes alertPulse {
+  0%,
+  100% {
+    background-color: rgba(254, 226, 226, 0.45);
+  }
+  50% {
+    background-color: rgba(254, 202, 202, 0.7);
+  }
+}
+
 .rise-in {
   animation: riseIn 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -69,5 +90,14 @@ button {
 
 .agenda-row:hover {
   background-color: rgba(15, 23, 42, 0.03);
+}
+
+.trend-row {
+  animation: trendReveal 420ms cubic-bezier(0.18, 0.84, 0.32, 1) both;
+}
+
+.operational-alert {
+  border-top: 1px solid rgba(251, 113, 133, 0.25);
+  animation: alertPulse 2300ms ease-in-out infinite;
 }
 

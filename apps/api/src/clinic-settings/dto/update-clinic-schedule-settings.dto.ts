@@ -16,4 +16,10 @@ export class UpdateClinicScheduleSettingsDto {
   @IsOptional()
   @Matches(HH_MM_PATTERN)
   closingTime?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  returnRateTargetPercent?: number;
 }
