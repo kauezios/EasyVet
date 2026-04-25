@@ -1,4 +1,4 @@
-﻿import { AppointmentStatus, Prisma } from '@prisma/client';
+import { AppointmentStatus, MedicalRecordStatus, Prisma } from '@prisma/client';
 import {
   ConflictException,
   Injectable,
@@ -17,6 +17,11 @@ const ACTIVE_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.CONFIRMED,
   AppointmentStatus.IN_PROGRESS,
 ];
+const DEFAULT_SCHEDULE_SETTINGS_ID = 'default';
+const DEFAULT_CONSULTATION_DURATION_MINUTES = 30;
+const DEFAULT_OPENING_TIME = '08:00';
+const DEFAULT_CLOSING_TIME = '18:00';
+const RETURN_SEARCH_DAYS_LIMIT = 30;
 
 @Injectable()
 export class AppointmentsService {
@@ -254,6 +259,120 @@ export class AppointmentsService {
     });
   }
 
+  async scheduleReturn(appointmentId: string) {
+    const sourceAppointment = await this.prisma.appointment.findUnique({
+      where: {
+        id: appointmentId,
+      },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            name: true,
+            species: true,
+            breed: true,
+          },
+        },
+        tutor: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+          },
+        },
+        medicalRecord: true,
+      },
+    });
+
+    if (!sourceAppointment) {
+      throw new NotFoundException({
+        code: 'APPOINTMENT_NOT_FOUND',
+        message: 'Consulta nao encontrada',
+      });
+    }
+
+    if (
+      !sourceAppointment.medicalRecord ||
+      sourceAppointment.medicalRecord.status !== MedicalRecordStatus.FINALIZED
+    ) {
+      throw new UnprocessableEntityException({
+        code: 'RETURN_REQUIRES_FINALIZED_MEDICAL_RECORD',
+        message:
+          'A consulta precisa ter prontuario finalizado para agendar retorno automatico',
+      });
+    }
+
+    if (!sourceAppointment.medicalRecord.recommendedReturnAt) {
+      throw new UnprocessableEntityException({
+        code: 'RETURN_DATE_NOT_DEFINED',
+        message:
+          'Defina uma data sugerida de retorno no prontuario antes de usar o agendamento automatico',
+      });
+    }
+
+    const scheduleSettings = await this.prisma.clinicScheduleSettings.upsert({
+      where: {
+        id: DEFAULT_SCHEDULE_SETTINGS_ID,
+      },
+      update: {},
+      create: {
+        id: DEFAULT_SCHEDULE_SETTINGS_ID,
+        consultationDurationMinutes: DEFAULT_CONSULTATION_DURATION_MINUTES,
+        openingTime: DEFAULT_OPENING_TIME,
+        closingTime: DEFAULT_CLOSING_TIME,
+      },
+    });
+
+    const slot = await this.findNextAvailableReturnSlot({
+      baseDate: sourceAppointment.medicalRecord.recommendedReturnAt,
+      veterinarianName: sourceAppointment.veterinarianName,
+      consultationDurationMinutes: scheduleSettings.consultationDurationMinutes,
+      openingTime: scheduleSettings.openingTime,
+      closingTime: scheduleSettings.closingTime,
+    });
+
+    const reason = `Retorno - ${sourceAppointment.reason}`.slice(0, 300);
+
+    const created = await this.prisma.appointment.create({
+      data: {
+        patientId: sourceAppointment.patientId,
+        tutorId: sourceAppointment.tutorId,
+        veterinarianName: sourceAppointment.veterinarianName,
+        startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
+        reason,
+        notes: `Retorno automatico gerado da consulta ${sourceAppointment.id}`,
+      },
+      include: {
+        patient: {
+          select: {
+            id: true,
+            name: true,
+            species: true,
+            breed: true,
+          },
+        },
+        tutor: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    await this.auditEvents.register({
+      actorId: null,
+      entity: 'APPOINTMENT',
+      entityId: created.id,
+      action: 'RETURN_APPOINTMENT_SCHEDULED',
+      summary: `Retorno criado automaticamente da consulta ${sourceAppointment.id} para ${created.startsAt.toISOString()}`,
+    });
+
+    return created;
+  }
+
   private validateDateRange(startsAt: Date, endsAt: Date): void {
     if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) {
       throw new UnprocessableEntityException({
@@ -329,5 +448,106 @@ export class AppointmentsService {
     }
 
     return `Consulta remarcada de ${previousWindow} para ${updatedWindow}; veterinario alterado de ${previous.veterinarianName} para ${updated.veterinarianName}`;
+  }
+
+  private async findNextAvailableReturnSlot(input: {
+    baseDate: Date;
+    veterinarianName: string;
+    consultationDurationMinutes: number;
+    openingTime: string;
+    closingTime: string;
+  }): Promise<{ startsAt: Date; endsAt: Date }> {
+    const now = new Date();
+    const baseDay = new Date(input.baseDate);
+    baseDay.setHours(0, 0, 0, 0);
+
+    for (
+      let dayOffset = 0;
+      dayOffset <= RETURN_SEARCH_DAYS_LIMIT;
+      dayOffset += 1
+    ) {
+      const day = new Date(baseDay);
+      day.setDate(baseDay.getDate() + dayOffset);
+
+      const slots = this.buildDaySlots(day, {
+        consultationDurationMinutes: input.consultationDurationMinutes,
+        openingTime: input.openingTime,
+        closingTime: input.closingTime,
+      });
+
+      for (const slot of slots) {
+        if (slot.startsAt.getTime() <= now.getTime()) {
+          continue;
+        }
+
+        try {
+          await this.ensureNoScheduleConflict(
+            input.veterinarianName,
+            slot.startsAt,
+            slot.endsAt,
+            null,
+          );
+
+          return slot;
+        } catch (error) {
+          if (error instanceof ConflictException) {
+            continue;
+          }
+
+          throw error;
+        }
+      }
+    }
+
+    throw new UnprocessableEntityException({
+      code: 'RETURN_NO_AVAILABLE_SLOT',
+      message:
+        'Nao foi encontrado horario livre para retorno dentro da janela de busca configurada',
+    });
+  }
+
+  private buildDaySlots(
+    day: Date,
+    settings: {
+      consultationDurationMinutes: number;
+      openingTime: string;
+      closingTime: string;
+    },
+  ): Array<{ startsAt: Date; endsAt: Date }> {
+    const dayKey = day.toISOString().slice(0, 10);
+    const startMinutes = this.timeToMinutes(settings.openingTime);
+    const endMinutes = this.timeToMinutes(settings.closingTime);
+    const slots: Array<{ startsAt: Date; endsAt: Date }> = [];
+
+    for (
+      let current = startMinutes;
+      current + settings.consultationDurationMinutes <= endMinutes;
+      current += settings.consultationDurationMinutes
+    ) {
+      const startsAt = this.minutesToDate(dayKey, current);
+      const endsAt = new Date(
+        startsAt.getTime() + settings.consultationDurationMinutes * 60 * 1000,
+      );
+
+      slots.push({
+        startsAt,
+        endsAt,
+      });
+    }
+
+    return slots;
+  }
+
+  private timeToMinutes(value: string): number {
+    const [hours, minutes] = value.split(':').map(Number);
+    return hours * 60 + minutes;
+  }
+
+  private minutesToDate(dayKey: string, absoluteMinutes: number): Date {
+    const hours = Math.floor(absoluteMinutes / 60);
+    const minutes = absoluteMinutes % 60;
+    return new Date(
+      `${dayKey}T${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:00`,
+    );
   }
 }

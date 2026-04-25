@@ -2291,37 +2291,179 @@ export default function Home() {
     }
   }
 
-  function onPrepareReturnScheduling() {
-    if (!selectedConsultation) {
+  async function onPrepareReturnScheduling() {
+    if (!selectedConsultation || !selectedMedicalRecord) {
       return;
     }
 
-    const suggestedDate =
-      medicalRecordForm.recommendedReturnAt ||
-      toLocalISODate(new Date(selectedConsultation.startsAt));
-
-    const targetDate = schedulingDatesWindow.includes(suggestedDate)
-      ? suggestedDate
-      : schedulingDatesWindow[0] ?? toLocalISODate(new Date());
-
-    setActiveSection('scheduling');
-    setSchedulingDate(targetDate);
-    setAppointmentForm((current) => ({
-      ...current,
-      patientId: selectedConsultation.patientId,
-      veterinarianName: selectedConsultation.veterinarianName,
-      reason: `Retorno - ${selectedConsultation.patient.name}`,
-      startsAt: '',
-    }));
-
-    if (!(targetDate in appointmentsByDate)) {
-      void ensureAppointmentsByDate([targetDate]);
+    if (selectedMedicalRecord.status !== 'FINALIZED') {
+      setStatusMessage('');
+      setErrorMessage(
+        'Finalize o prontuario antes de usar o agendamento automatico de retorno.',
+      );
+      return;
     }
 
+    const suggestedDate = medicalRecordForm.recommendedReturnAt;
+    if (!suggestedDate) {
+      setStatusMessage('');
+      setErrorMessage(
+        'Defina a data sugerida de retorno para agendar automaticamente.',
+      );
+      return;
+    }
+
+    setStatusMessage('');
     setErrorMessage('');
-    setStatusMessage(
-      `Fluxo de retorno preparado para ${selectedConsultation.patient.name}.`,
-    );
+
+    try {
+      if (isDemoMode) {
+        const candidateDates = Array.from(
+          new Set([suggestedDate, ...schedulingDatesWindow]),
+        );
+
+        await ensureAppointmentsByDate(
+          candidateDates.filter((dateIso) => !(dateIso in appointmentsByDate)),
+        );
+
+        let selectedSlot: { dateIso: string; time: string } | null = null;
+        for (const dateIso of candidateDates) {
+          const dayAppointments = appointmentsByDate[dateIso] ?? [];
+          const slots = buildSlotsAvailability(
+            dateIso,
+            dailySlots,
+            clinicSettings.consultationDurationMinutes,
+            dayAppointments,
+            {
+              ignoreCanceledAppointments: true,
+            },
+          );
+
+          const free = slots.find((slot) => !slot.blocked);
+          if (free) {
+            selectedSlot = {
+              dateIso,
+              time: free.time,
+            };
+            break;
+          }
+        }
+
+        if (!selectedSlot) {
+          throw new Error('Nao ha horario livre para retorno na janela atual.');
+        }
+
+        const startsAt = joinDateAndTime(selectedSlot.dateIso, selectedSlot.time);
+        const endsAt = addMinutesToDate(
+          selectedSlot.dateIso,
+          selectedSlot.time,
+          clinicSettings.consultationDurationMinutes,
+        );
+
+        const createdAppointment: Appointment = {
+          id: `demo-appt-return-${Date.now()}`,
+          patientId: selectedConsultation.patientId,
+          tutorId: selectedConsultation.tutorId,
+          veterinarianName: selectedConsultation.veterinarianName,
+          startsAt,
+          endsAt,
+          reason: `Retorno - ${selectedConsultation.reason}`,
+          status: 'SCHEDULED',
+          notes: `Retorno automatico da consulta ${selectedConsultation.id}`,
+          patient: selectedConsultation.patient,
+          tutor: selectedConsultation.tutor,
+        };
+
+        setAppointmentsByDate((current) => ({
+          ...current,
+          [selectedSlot.dateIso]: sortAppointments([
+            ...(current[selectedSlot.dateIso] ?? []),
+            createdAppointment,
+          ]),
+        }));
+
+        if (selectedSlot.dateIso === selectedDate) {
+          setAppointments((current) =>
+            sortAppointments([...current, createdAppointment]),
+          );
+        }
+
+        setPatientHistoryAppointments((current) =>
+          sortAppointments([...current, createdAppointment]),
+        );
+
+        const now = new Date().toISOString();
+        setAuditEvents((current) => [
+          {
+            id: `demo-audit-return-${Date.now()}`,
+            actorId: authUser?.id ?? null,
+            entity: 'APPOINTMENT',
+            entityId: createdAppointment.id,
+            action: 'RETURN_APPOINTMENT_SCHEDULED',
+            summary: `Retorno criado automaticamente da consulta ${selectedConsultation.id} para ${createdAppointment.startsAt}`,
+            createdAt: now,
+          },
+          ...current,
+        ]);
+        setAuditReferenceNow(new Date(now).getTime());
+
+        setSelectedDate(selectedSlot.dateIso);
+        setActiveSection('consultations');
+        setStatusMessage(
+          `Retorno agendado automaticamente para ${formatDateTime(
+            createdAppointment.startsAt,
+          )} (modo demonstracao).`,
+        );
+        return;
+      }
+
+      const createdAppointment = await request<Appointment>(
+        `/appointments/${selectedConsultation.id}/return`,
+        {
+          method: 'POST',
+        },
+      );
+
+      const createdDate = toLocalISODate(new Date(createdAppointment.startsAt));
+
+      setAppointmentsByDate((current) => ({
+        ...current,
+        [createdDate]: sortAppointments([
+          ...(current[createdDate] ?? []).filter(
+            (appointment) => appointment.id !== createdAppointment.id,
+          ),
+          createdAppointment,
+        ]),
+      }));
+
+      if (createdDate === selectedDate) {
+        setAppointments((current) =>
+          sortAppointments([
+            ...current.filter((appointment) => appointment.id !== createdAppointment.id),
+            createdAppointment,
+          ]),
+        );
+      }
+
+      setPatientHistoryAppointments((current) =>
+        sortAppointments([
+          ...current.filter((appointment) => appointment.id !== createdAppointment.id),
+          createdAppointment,
+        ]),
+      );
+
+      setSelectedDate(createdDate);
+      setActiveSection('consultations');
+      setStatusMessage(
+        `Retorno agendado automaticamente para ${formatDateTime(
+          createdAppointment.startsAt,
+        )}.`,
+      );
+    } catch (error) {
+      setErrorMessage(
+        normalizeErrorMessage(error, 'Falha ao agendar retorno automaticamente.'),
+      );
+    }
   }
 
   function onOpenRescheduleDrawer(appointment: Appointment) {
@@ -4305,11 +4447,19 @@ export default function Home() {
                           </button>
                           <button
                             type="button"
-                            onClick={onPrepareReturnScheduling}
-                            disabled={!medicalRecordForm.recommendedReturnAt}
+                            onClick={() => {
+                              void onPrepareReturnScheduling();
+                            }}
+                            disabled={
+                              isMedicalRecordSaving ||
+                              isMedicalRecordFinalizing ||
+                              !selectedMedicalRecord ||
+                              selectedMedicalRecord.status !== 'FINALIZED' ||
+                              !medicalRecordForm.recommendedReturnAt
+                            }
                             className="rounded-md border border-cyan-300 bg-cyan-50 px-4 py-2 text-sm font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-55"
                           >
-                            Agendar retorno
+                            Agendar retorno (1 clique)
                           </button>
                         </div>
 

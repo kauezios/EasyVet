@@ -1,5 +1,8 @@
-import { ConflictException } from '@nestjs/common';
-import { AppointmentStatus } from '@prisma/client';
+import {
+  ConflictException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import { AppointmentStatus, MedicalRecordStatus } from '@prisma/client';
 import { AppointmentsService } from './appointments.service';
 
 type AppointmentWithRelations = {
@@ -27,6 +30,12 @@ type AppointmentWithRelations = {
     phone: string | null;
     email?: string | null;
   };
+  medicalRecord?: {
+    id: string;
+    appointmentId: string;
+    status: MedicalRecordStatus;
+    recommendedReturnAt: Date | null;
+  } | null;
 };
 
 function buildAppointment(
@@ -147,6 +156,112 @@ describe('AppointmentsService audit trail', () => {
     ).rejects.toBeInstanceOf(ConflictException);
 
     expect(prisma.appointment.update).not.toHaveBeenCalled();
+    expect(auditEvents.register).not.toHaveBeenCalled();
+  });
+
+  it('agenda retorno automatico e registra auditoria', async () => {
+    const source = buildAppointment({
+      id: 'appt-source-1',
+      reason: 'Retorno dermatologico',
+      veterinarianName: 'Dr. Rafael Lima',
+      medicalRecord: {
+        id: 'record-1',
+        appointmentId: 'appt-source-1',
+        status: MedicalRecordStatus.FINALIZED,
+        recommendedReturnAt: new Date('2027-01-15T12:00:00.000Z'),
+      },
+    });
+    const created = buildAppointment({
+      id: 'appt-return-1',
+      startsAt: new Date('2027-01-15T08:00:00.000Z'),
+      endsAt: new Date('2027-01-15T08:30:00.000Z'),
+      veterinarianName: source.veterinarianName,
+      reason: 'Retorno - Retorno dermatologico',
+    });
+
+    const prisma = {
+      patient: {
+        findFirst: jest.fn(),
+      },
+      clinicScheduleSettings: {
+        upsert: jest.fn().mockResolvedValue({
+          id: 'default',
+          consultationDurationMinutes: 30,
+          openingTime: '08:00',
+          closingTime: '18:00',
+          createdAt: new Date('2026-01-01T00:00:00.000Z'),
+          updatedAt: new Date('2026-01-01T00:00:00.000Z'),
+        }),
+      },
+      appointment: {
+        findUnique: jest.fn().mockResolvedValue(source),
+        findFirst: jest.fn().mockResolvedValue(null),
+        update: jest.fn(),
+        create: jest.fn().mockResolvedValue(created),
+      },
+    };
+
+    const auditEvents = {
+      register: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const service = new AppointmentsService(
+      prisma as never,
+      auditEvents as never,
+    );
+
+    const result = await service.scheduleReturn(source.id);
+
+    expect(result.id).toBe(created.id);
+    expect(prisma.appointment.create).toHaveBeenCalledTimes(1);
+    expect(auditEvents.register).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'RETURN_APPOINTMENT_SCHEDULED',
+        entityId: created.id,
+      }),
+    );
+  });
+
+  it('bloqueia retorno automatico quando prontuario nao esta finalizado', async () => {
+    const source = buildAppointment({
+      id: 'appt-source-2',
+      medicalRecord: {
+        id: 'record-2',
+        appointmentId: 'appt-source-2',
+        status: MedicalRecordStatus.DRAFT,
+        recommendedReturnAt: new Date('2027-01-15T12:00:00.000Z'),
+      },
+    });
+
+    const prisma = {
+      patient: {
+        findFirst: jest.fn(),
+      },
+      clinicScheduleSettings: {
+        upsert: jest.fn(),
+      },
+      appointment: {
+        findUnique: jest.fn().mockResolvedValue(source),
+        findFirst: jest.fn(),
+        update: jest.fn(),
+        create: jest.fn(),
+      },
+    };
+
+    const auditEvents = {
+      register: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const service = new AppointmentsService(
+      prisma as never,
+      auditEvents as never,
+    );
+
+    await expect(service.scheduleReturn(source.id)).rejects.toBeInstanceOf(
+      UnprocessableEntityException,
+    );
+
+    expect(prisma.appointment.create).not.toHaveBeenCalled();
     expect(auditEvents.register).not.toHaveBeenCalled();
   });
 });

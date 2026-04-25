@@ -37,6 +37,11 @@ export class AppointmentsController {
     return this.appointmentsService.reschedule(id, dto);
   }
 
+  @Post(':id/return')
+  scheduleReturn(@Param('id') id: string) {
+    return this.appointmentsService.scheduleReturn(id);
+  }
+
   @Patch(':id/status')
   updateStatus(
     @Param('id') id: string,
